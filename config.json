@@ -1,0 +1,24 @@
+{
+  "demo_mode": true,
+  "demo_date": "2026-05-20",
+  "weather": {
+    "use_real": false,
+    "timeout_sec": 6
+  },
+  "llm": {
+    "enabled": true,
+    "model": "am/nemotron-3-ultra-558b-a55b",
+    "fallback_models": [
+      "am/nemotron-3.5-lightning-30b-a3b"
+    ],
+    "base_url": "https://anymodel.org/v1",
+    "temperature": 0.4,
+    "reasoning_effort": "low",
+    "timeout_sec": 180
+  },
+  "app": {
+    "title": "Агро-Радар",
+    "host": "0.0.0.0",
+    "port": 8000
+  }
+}

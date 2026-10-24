@@ -1,0 +1,20 @@
+{
+  "name": "Агро-Радар — агрономические решения",
+  "short_name": "Агро-Радар",
+  "description": "Светофор рисков по полям, погода, состояние посевов, севооборот, почва и ИИ-Агроном. Работает офлайн после первого открытия.",
+  "lang": "ru",
+  "dir": "ltr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0f1419",
+  "theme_color": "#1a1f26",
+  "categories": ["productivity", "business"],
+  "icons": [
+    { "src": "/static/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/static/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/static/icons/icon-192-maskable.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/static/icons/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

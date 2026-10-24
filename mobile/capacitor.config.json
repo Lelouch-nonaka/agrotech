@@ -1,0 +1,16 @@
+{
+  "appId": "ru.agroradar.app",
+  "appName": "Агро-Радар",
+  "webDir": "www",
+  "server": {
+    "url": "http://192.168.1.182:8000",
+    "cleartext": true,
+    "androidScheme": "http"
+  },
+  "android": {
+    "allowMixedContent": true
+  },
+  "ios": {
+    "contentInset": "always"
+  }
+}

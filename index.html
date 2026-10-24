@@ -1,0 +1,2003 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="description" content="Агро-Радар — светофор рисков, погода, состояние посевов, севооборот, почва и ИИ-Агроном.">
+    <meta name="theme-color" content="#1a1f26">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Агро-Радар">
+    <title>Агро-Радар — аналитика полей</title>
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="icon" href="/static/icons/favicon.png" type="image/png">
+    <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+    <link rel="stylesheet" href="/static/vendor/leaflet.css">
+    <script src="/static/vendor/leaflet.js"></script>
+    <script src="/static/vendor/chart.umd.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: #0f1419; color: #e6e6e6; height: 100vh;
+            display: flex; flex-direction: column; overflow: hidden;
+        }
+        .alert-banner {
+            background: linear-gradient(90deg, #b71c1c, #f44336);
+            color: white; padding: 8px 20px;
+            display: none; align-items: center; gap: 12px;
+            font-size: 13px; flex-shrink: 0;
+        }
+        .alert-banner.visible { display: flex; }
+        .alert-banner .icon { font-size: 18px; }
+        .alert-banner .text { flex-grow: 1; }
+        .alert-banner .close {
+            background: rgba(255,255,255,0.2); border: none; color: white;
+            width: 24px; height: 24px; border-radius: 50%;
+            cursor: pointer; font-size: 14px;
+        }
+        .top-bar {
+            background: #1a1f26; border-bottom: 1px solid #2a3138;
+            padding: 10px 20px; display: flex; align-items: center; gap: 24px;
+            flex-shrink: 0;
+        }
+        .logo { font-size: 16px; font-weight: 600; color: #4CAF50; }
+        .tabs { display: flex; gap: 4px; }
+        .tab {
+            padding: 7px 16px; background: transparent; border: none;
+            color: #888; cursor: pointer; font-family: inherit;
+            font-size: 13px; border-radius: 6px;
+        }
+        .tab:hover { color: #ccc; background: #232a33; }
+        .tab.active { color: #4CAF50; background: #232a33; font-weight: 600; }
+        .t-short { display: none; }
+
+        .app { flex-grow: 1; display: flex; min-height: 0; }
+        .view { display: none; flex-grow: 1; min-height: 0; }
+        .view.active { display: flex; }
+
+        .sidebar {
+            width: 280px; background: #1a1f26; border-right: 1px solid #2a3138;
+            display: flex; flex-direction: column; flex-shrink: 0;
+        }
+        .sidebar-header { padding: 14px 16px; border-bottom: 1px solid #2a3138; }
+        .sidebar-header h2 { font-size: 14px; color: #ccc; }
+        .sidebar-header p { font-size: 11px; color: #888; margin-top: 3px; }
+        .fields-list { flex-grow: 1; overflow-y: auto; padding: 10px; }
+        .field-card {
+            padding: 10px 12px; margin-bottom: 8px; background: #232a33;
+            border-radius: 6px; cursor: pointer;
+            border-left: 3px solid #555;
+            transition: transform 0.2s ease, background 0.15s, box-shadow 0.2s ease;
+            position: relative;
+        }
+        .field-card:hover {
+            transform: translateX(4px) translateY(-2px);
+            background: #2a323d;
+            box-shadow: 0 6px 16px rgba(76,175,80,0.15);
+        }
+        .field-card.active { background: #2a323d; border-left-width: 5px; box-shadow: 0 0 0 1px #4CAF50 inset; }
+        .field-card.active::after {
+            content: '▸'; position: absolute; right: 10px; top: 50%;
+            transform: translateY(-50%); color: #4CAF50; font-size: 16px;
+        }
+        .field-card.status-ok { border-left-color: #4CAF50; }
+        .field-card.status-warning { border-left-color: #ff9800; }
+        .field-card.status-critical { border-left-color: #f44336; }
+        .field-card .name { font-weight: 600; font-size: 13px; margin-bottom: 2px; }
+        .field-card .meta { font-size: 11px; color: #888; margin-bottom: 6px; }
+        .field-card .risks { display: flex; gap: 6px; font-size: 10px; }
+        .risk-badge { padding: 2px 6px; border-radius: 3px; background: #333; font-weight: 600; }
+        .risk-badge.low { background: #1b5e20; color: #a5d6a7; }
+        .risk-badge.mid { background: #e65100; color: #ffcc80; }
+        .risk-badge.high { background: #b71c1c; color: #ef9a9a; }
+
+        .main { flex-grow: 1; display: flex; flex-direction: column; min-width: 0; overflow-y: auto; padding: 18px 22px; }
+        /* контент скроллится, а не сжимается: иначе вкладки поля схлопываются в 1 px */
+        .main > * { flex-shrink: 0; }
+
+        .field-header {
+            display: flex; align-items: flex-start; justify-content: space-between;
+            margin-bottom: 14px; gap: 12px;
+        }
+        .field-title h2 { font-size: 20px; margin-bottom: 4px; display: flex; align-items: center; gap: 10px; }
+        .field-title .subtitle { color: #888; font-size: 12px; }
+        .status-pill {
+            padding: 3px 10px; border-radius: 12px;
+            font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .status-pill.ok { background: #1b5e20; color: #a5d6a7; }
+        .status-pill.warning { background: #e65100; color: #ffcc80; }
+        .status-pill.critical { background: #b71c1c; color: #ef9a9a; }
+
+        .field-stamp {
+            display: inline-flex; align-items: center; gap: 6px;
+            margin-top: 9px; padding: 5px 12px;
+            border-radius: 10px; background: rgba(76, 175, 80, .10);
+            border: 1px solid rgba(76, 175, 80, .35);
+            color: #cfe9d6; font-size: 13px;
+        }
+        .field-stamp b { color: #8bd694; font-weight: 600; }
+
+        .action-btn {
+            padding: 9px 16px; background: #4CAF50; color: white;
+            border: none; border-radius: 6px;
+            cursor: pointer; font-family: inherit; font-size: 13px;
+            font-weight: 600; white-space: nowrap;
+            display: flex; align-items: center; gap: 6px;
+            transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s;
+        }
+        .action-btn:hover {
+            background: #43a047;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 14px rgba(76,175,80,0.3);
+        }
+        .action-btn:active { transform: translateY(0); }
+
+        .section-title {
+            font-size: 11px; color: #888; text-transform: uppercase;
+            letter-spacing: 0.8px; margin-bottom: 8px; font-weight: 600;
+        }
+
+        .metrics {
+            display: grid; grid-template-columns: repeat(6, 1fr);
+            gap: 10px; margin-bottom: 18px;
+        }
+        .metric {
+            background: #1a1f26; padding: 10px 12px; border-radius: 6px;
+            border-left: 3px solid #555;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            animation: slideUp 0.3s ease;
+        }
+        .metric:hover { transform: translateY(-4px); box-shadow: 0 8px 18px rgba(0,0,0,0.4); }
+        .metric.ok { border-left-color: #4CAF50; }
+        .metric.warn { border-left-color: #ff9800; }
+        .metric.danger { border-left-color: #f44336; }
+        .metric .label { font-size: 10px; color: #777; text-transform: uppercase; letter-spacing: 0.4px; }
+        .metric .value { font-size: 18px; font-weight: 600; margin-top: 4px; }
+
+        .weather-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 8px; }
+        .weather-card {
+            background: #1a1f26; border-radius: 10px; padding: 16px 12px;
+            display: flex; flex-direction: column; align-items: center;
+            gap: 6px; text-align: center;
+            border-top: 3px solid #4CAF50;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            animation: slideUp 0.3s ease;
+        }
+        .weather-card:hover { transform: translateY(-6px); box-shadow: 0 10px 20px rgba(0,0,0,0.4); }
+        .weather-card.today { background: linear-gradient(180deg, #2e7d32, #1b5e20); border-top-color: #a5d6a7; }
+        .weather-card .wc-day { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 0.6px; font-weight: 600; }
+        .weather-card.today .wc-day { color: #d4ffd4; }
+        .weather-card .wc-icon { font-size: 42px; line-height: 1; margin: 4px 0; }
+        .weather-card .wc-desc { font-size: 12px; color: #bbb; font-weight: 500; min-height: 16px; }
+        .weather-card.today .wc-desc { color: #e8f5e9; }
+        .weather-card .wc-temp { font-size: 24px; font-weight: 700; line-height: 1.1; }
+        .weather-card .wc-temp small { font-size: 14px; color: #888; font-weight: 400; }
+        .weather-card.today .wc-temp small { color: #a5d6a7; }
+        .weather-card .wc-meta { font-size: 11px; color: #64b5f6; display: flex; flex-direction: column; gap: 2px; }
+        .weather-source { font-size: 11px; color: #666; margin-bottom: 18px; text-align: right; font-style: italic; }
+
+        .recs-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 18px; }
+        .rec-item {
+            display: flex; align-items: flex-start; gap: 10px;
+            padding: 10px 12px; background: #1a1f26; border-radius: 6px;
+            border-left: 3px solid #555;
+            font-size: 12.5px; line-height: 1.4;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            animation: slideUp 0.3s ease;
+        }
+        .rec-item:hover { transform: translateY(-3px); box-shadow: 0 6px 14px rgba(0,0,0,0.35); }
+        .rec-item.ok { border-left-color: #4CAF50; }
+        .rec-item.warn { border-left-color: #ff9800; }
+        .rec-item.danger { border-left-color: #f44336; }
+        .rec-item .rec-icon { font-size: 16px; flex-shrink: 0; }
+        .rec-item .rec-text { color: #ccc; }
+        .rec-item .rec-text strong { color: #fff; }
+
+        .visuals { display: grid; grid-template-columns: 1.3fr 1fr; gap: 12px; margin-bottom: 18px; }
+        .visual-box { background: #1a1f26; border-radius: 8px; overflow: hidden; height: 260px; position: relative; }
+        #map { width: 100%; height: 100%; }
+        .chart-container { padding: 12px; height: 100%; }
+
+        .culture-card {
+            background: linear-gradient(135deg, #1a3a1e, #1a1f26);
+            border-radius: 8px; padding: 14px 18px;
+            border-left: 4px solid #4CAF50;
+            font-size: 13px; line-height: 1.55;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            animation: slideUp 0.3s ease;
+        }
+        .culture-card:hover { transform: translateY(-3px); box-shadow: 0 8px 20px rgba(76,175,80,0.15); }
+        .culture-card h4 { color: #a5d6a7; font-size: 13px; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .culture-card p { color: #ccc; margin-bottom: 6px; }
+        .culture-card .highlight { color: #4CAF50; font-weight: 600; }
+
+        /* ====== ПЛАВАЮЩАЯ КНОПКА ====== */
+        .chat-fab {
+            position: fixed; bottom: 26px; right: 26px;
+            display: flex; align-items: center; gap: 12px;
+            padding: 9px 20px 9px 9px;
+            border-radius: 18px;
+            background: rgba(16, 21, 26, .92);
+            border: 1px solid rgba(76, 175, 80, .45);
+            color: #e6e6e6; font-family: inherit;
+            cursor: pointer;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, .45), inset 0 1px 0 rgba(255, 255, 255, .04);
+            backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+            transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+            z-index: 900;
+        }
+        .chat-fab .fab-icon {
+            width: 40px; height: 40px; border-radius: 12px;
+            display: grid; place-items: center; font-size: 19px;
+            background: linear-gradient(135deg, #4CAF50, #2e7d32);
+            box-shadow: 0 4px 12px rgba(76, 175, 80, .35);
+        }
+        .chat-fab .fab-text { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; }
+        .chat-fab .fab-title { font-size: 13.5px; font-weight: 600; color: #fff; letter-spacing: .01em; }
+        .chat-fab .fab-sub { font-size: 10.5px; color: #8a949e; }
+        .chat-fab:hover {
+            transform: translateY(-3px);
+            border-color: #4CAF50;
+            box-shadow: 0 14px 34px rgba(0, 0, 0, .5), 0 0 0 3px rgba(76, 175, 80, .12);
+        }
+        .chat-fab:active { transform: translateY(0) scale(.98); }
+        .chat-fab .fab-pulse {
+            position: absolute; top: 7px; left: 39px;
+            width: 8px; height: 8px; background: #ffeb3b;
+            border: 2px solid #10151a; border-radius: 50%;
+            animation: fabPulse 2s infinite;
+        }
+        @keyframes fabPulse {
+            0% { box-shadow: 0 0 0 0 rgba(255,235,59,0.7); }
+            70% { box-shadow: 0 0 0 12px rgba(255,235,59,0); }
+            100% { box-shadow: 0 0 0 0 rgba(255,235,59,0); }
+        }
+
+        /* ====== МОДАЛЬНОЕ ОКНО ====== */
+        .chat-modal-overlay {
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,0.7);
+            backdrop-filter: blur(6px);
+            display: none;
+            align-items: center; justify-content: center;
+            z-index: 1000;
+            padding: 30px;
+        }
+        .chat-modal-overlay.visible { display: flex; }
+        .chat-modal-overlay.minimized {
+            padding: 0;
+            background: transparent;
+            backdrop-filter: none;
+            pointer-events: none;
+            align-items: flex-end; justify-content: flex-end;
+        }
+        .chat-modal-overlay.minimized .chat-modal {
+            pointer-events: auto;
+            width: 420px;
+            height: 560px;
+            max-width: calc(100vw - 48px);
+            max-height: calc(100vh - 140px);
+            margin: 0 24px 100px 0;
+            border-radius: 12px;
+            box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+        }
+
+        .chat-modal {
+            background: #141a21;
+            width: 100%; max-width: 1100px;
+            height: 90vh; max-height: 900px;
+            border-radius: 16px;
+            display: flex; flex-direction: column;
+            overflow: hidden;
+            box-shadow: 0 24px 80px rgba(0,0,0,0.7);
+            transition: width 0.25s ease, height 0.25s ease, margin 0.25s ease, border-radius 0.25s ease;
+        }
+        .chat-modal.dragging { transition: none !important; }
+        .chat-modal-overlay.minimized .chat-modal .modal-header { cursor: move; }
+
+        .modal-header {
+            padding: 16px 22px; background: #1a1f26;
+            border-bottom: 1px solid #2a3138;
+            display: flex; align-items: center; justify-content: space-between;
+            flex-shrink: 0;
+            gap: 12px;
+        }
+        .modal-header-left { flex-grow: 1; min-width: 0; }
+        .modal-header-left h3 { font-size: 17px; margin-bottom: 3px; }
+        .modal-header-left .sub {
+            font-size: 12.5px; color: #888;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .modal-header-left .save-badge {
+            display: inline-block; margin-left: 8px;
+            background: #1b5e20; color: #a5d6a7;
+            padding: 1px 8px; border-radius: 10px;
+            font-size: 11px; font-weight: 600;
+        }
+        .modal-header-actions { display: flex; gap: 8px; flex-shrink: 0; }
+        .modal-icon-btn {
+            background: #232a33; border: none; color: #ccc;
+            width: 36px; height: 36px; border-radius: 8px;
+            cursor: pointer; font-size: 16px;
+            display: flex; align-items: center; justify-content: center;
+            transition: background 0.15s;
+        }
+        .modal-icon-btn:hover { background: #3a4148; color: white; }
+
+        .modal-body { flex-grow: 1; display: flex; flex-direction: column; min-height: 0; }
+
+        .chat-messages { flex-grow: 1; overflow-y: auto; padding: 24px 32px; }
+        .chat-modal-overlay.minimized .chat-messages { padding: 16px 18px; }
+
+        .msg {
+            max-width: 85%; padding: 14px 20px; border-radius: 14px;
+            margin-bottom: 16px; font-size: 15px; line-height: 1.6;
+            word-wrap: break-word; overflow-wrap: break-word;
+            animation: fadeIn 0.25s ease;
+        }
+        .msg p { margin: 0 0 6px; }
+        .msg p:last-child { margin-bottom: 0; }
+        .msg ul { margin: 6px 0 6px 18px; padding: 0; }
+        .msg li { margin: 3px 0; }
+        .msg h3, .msg h4, .msg h5 { margin: 10px 0 6px; color: #fff; line-height: 1.3; }
+        .msg hr { border: none; border-top: 1px solid #333; margin: 10px 0; }
+        .msg code { background: #111; padding: 1px 5px; border-radius: 4px; font-size: .92em; }
+        .chat-modal-overlay.minimized .msg {
+            font-size: 13.5px; padding: 10px 14px;
+            max-width: 95%; margin-bottom: 10px;
+        }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+
+        .msg.user { background: #2196F3; margin-left: auto; border-bottom-right-radius: 3px; white-space: pre-wrap; }
+        .msg.ai { background: #232a33; border-bottom-left-radius: 3px; border-left: 3px solid #4CAF50; }
+        .msg.system {
+            color: #888; text-align: center; font-size: 13px;
+            margin: 14px auto; max-width: 100%; background: none;
+        }
+        .msg.thinking { color: #888; font-style: italic; }
+        .stream-cursor { color: #4CAF50; margin-left: 2px; animation: cursorBlink 1s steps(2) infinite; }
+        @keyframes cursorBlink { 50% { opacity: 0; } }
+
+        .msg.ai ul, .msg.ai ol { margin: 10px 0 10px 22px; }
+        .msg.ai li { margin-bottom: 6px; }
+        .msg.ai h3 { font-size: 18px; margin: 18px 0 10px; color: #4CAF50; font-weight: 700; }
+        .msg.ai h4 { font-size: 16px; margin: 14px 0 8px; color: #4CAF50; font-weight: 600; }
+        .msg.ai h5 { font-size: 15px; margin: 12px 0 6px; color: #81c784; }
+        .msg.ai strong { color: #fff; font-weight: 700; }
+        .msg.ai em { color: #ffeb3b; font-style: italic; }
+        .msg.ai p { margin: 8px 0; }
+        .msg.ai hr { border: none; border-top: 1px solid #3a4148; margin: 16px 0; }
+
+        /* ====== КАРТОЧКИ-ТАБЛИЦЫ (вертикальные, читаемые) ====== */
+        .md-card {
+            background: #1a1f26;
+            border-radius: 10px;
+            margin: 12px 0;
+            border-left: 3px solid #4CAF50;
+            overflow: hidden;
+        }
+        .md-card-item {
+            padding: 12px 16px;
+            border-bottom: 1px solid #2a3138;
+        }
+        .md-card-item:last-child { border-bottom: none; }
+        .md-card-key {
+            display: block;
+            font-size: 12px;
+            font-weight: 700;
+            color: #4CAF50;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            margin-bottom: 6px;
+        }
+        .md-card-val {
+            color: #ddd;
+            font-size: 14px;
+            line-height: 1.55;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+        }
+        .md-card-val strong { color: #fff; font-weight: 600; }
+
+        .chat-modal-overlay.minimized .md-card-item { padding: 8px 12px; }
+        .chat-modal-overlay.minimized .md-card-key { font-size: 11px; margin-bottom: 4px; }
+        .chat-modal-overlay.minimized .md-card-val { font-size: 12.5px; }
+
+        .quick-actions {
+            display: flex; gap: 8px; padding: 0 32px 14px;
+            flex-wrap: wrap; flex-shrink: 0;
+        }
+        .chat-modal-overlay.minimized .quick-actions { padding: 0 14px 8px; gap: 5px; }
+        .quick-btn {
+            padding: 9px 16px; font-size: 13.5px;
+            background: #232a33; color: #bbb; border: 1px solid #333;
+            border-radius: 20px; cursor: pointer; font-family: inherit;
+            transition: transform 0.15s, background 0.15s, color 0.15s, border-color 0.15s;
+        }
+        .chat-modal-overlay.minimized .quick-btn { padding: 5px 10px; font-size: 11.5px; }
+        .quick-btn:hover { background: #2a323d; color: white; border-color: #4CAF50; transform: translateY(-2px); }
+
+        .chat-input {
+            padding: 16px 32px 20px; border-top: 1px solid #2a3138;
+            display: flex; gap: 12px; flex-shrink: 0;
+            background: #1a1f26;
+        }
+        .chat-modal-overlay.minimized .chat-input { padding: 10px 14px 12px; gap: 8px; }
+        .chat-input input {
+            flex-grow: 1; padding: 14px 18px; background: #232a33;
+            border: 1px solid #333; color: white; border-radius: 10px;
+            font-size: 15px; font-family: inherit; min-width: 0;
+        }
+        .chat-modal-overlay.minimized .chat-input input { padding: 9px 12px; font-size: 13px; }
+        .chat-input input:focus { outline: none; border-color: #4CAF50; }
+        .chat-input button {
+            padding: 14px 26px; background: #4CAF50; color: white;
+            border: none; border-radius: 10px; cursor: pointer;
+            font-weight: 600; font-family: inherit; font-size: 15px;
+            white-space: nowrap; flex-shrink: 0;
+            transition: transform 0.15s, box-shadow 0.15s, background 0.15s;
+        }
+        .chat-modal-overlay.minimized .chat-input button { padding: 9px 14px; font-size: 13px; }
+        .chat-input button:hover:not(:disabled) { background: #43a047; transform: translateY(-2px); box-shadow: 0 6px 16px rgba(76,175,80,0.3); }
+        .chat-input button:disabled { background: #444; cursor: not-allowed; }
+
+        .placeholder {
+            display: flex; align-items: center; justify-content: center;
+            flex-grow: 1; color: #555; font-size: 15px;
+            flex-direction: column; gap: 10px; padding: 60px;
+        }
+        .placeholder .icon { font-size: 42px; opacity: 0.3; }
+
+        .loading-field { display: flex; align-items: center; justify-content: center; padding: 80px; flex-direction: column; gap: 14px; }
+        .spinner { width: 36px; height: 36px; border: 3px solid #333; border-top-color: #4CAF50; border-radius: 50%; animation: spin 0.8s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        .map-full { flex-grow: 1; position: relative; }
+        #allFieldsMap { width: 100%; height: 100%; }
+        .compare-view { flex-grow: 1; padding: 20px 24px; overflow-y: auto; }
+        .compare-view h2 { margin-bottom: 14px; color: #4CAF50; font-size: 18px; }
+        .compare-table { width: 100%; border-collapse: collapse; background: #1a1f26; border-radius: 8px; overflow: hidden; }
+        .compare-table th, .compare-table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #2a3138; font-size: 12.5px; }
+        .compare-table th { background: #232a33; color: #4CAF50; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; user-select: none; }
+        .compare-table th:hover { background: #2a323d; }
+        .compare-table tr:hover { background: #1e242b; }
+        .risk-cell { padding: 3px 7px; border-radius: 4px; display: inline-block; font-weight: 600; font-size: 11.5px; min-width: 40px; text-align: center; }
+        .risk-cell.low { background: #1b5e20; color: #a5d6a7; }
+        .risk-cell.mid { background: #e65100; color: #ffcc80; }
+        .risk-cell.high { background: #b71c1c; color: #ef9a9a; }
+        .status-badge { padding: 3px 9px; border-radius: 11px; font-size: 10.5px; font-weight: 600; text-transform: uppercase; }
+        .status-badge.ok { background: #1b5e20; color: #a5d6a7; }
+        .status-badge.warning { background: #e65100; color: #ffcc80; }
+        .status-badge.critical { background: #b71c1c; color: #ef9a9a; }
+
+        .summary-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+        .summary-card { background: #1a1f26; padding: 14px 16px; border-radius: 8px; border-left: 4px solid #4CAF50; transition: transform 0.2s ease, box-shadow 0.2s ease; }
+        .summary-card:hover { transform: translateY(-4px); box-shadow: 0 8px 18px rgba(0,0,0,0.4); }
+        .summary-card .label { font-size: 11px; color: #888; }
+        .summary-card .num { font-size: 24px; font-weight: 700; margin-top: 4px; }
+        .summary-card.danger { border-left-color: #f44336; }
+        .summary-card.warn { border-left-color: #ff9800; }
+
+        ::-webkit-scrollbar { width: 10px; height: 10px; }
+        ::-webkit-scrollbar-track { background: #1a1f26; }
+        ::-webkit-scrollbar-thumb { background: #3a4148; border-radius: 5px; }
+        ::-webkit-scrollbar-thumb:hover { background: #4a5259; }
+        /* ===== Состояние полей и агрономия ===== */
+        .state-view { flex: 1; overflow-y: auto; padding: 18px 22px 40px; width: 100%; }
+        .state-head { display: flex; justify-content: space-between; align-items: baseline;
+                      gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
+        .state-title { font-size: 20px; font-weight: 600; }
+        .state-sub { font-size: 12.5px; color: #8a949e; }
+        .state-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+        .state-kpi { background: #1a1f26; border: 1px solid #2a3138; border-radius: 8px; padding: 12px 14px; }
+        .state-kpi .n { font-size: 22px; font-weight: 700; }
+        .state-kpi .l { font-size: 10.5px; color: #7f8b96; margin-top: 3px; }
+        .state-kpi.crit .n { color: #f44336; }
+        .state-kpi.warn .n { color: #ff9800; }
+        .state-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
+        .sow-card { background: #1a1f26; border: 1px solid #2a3138; border-left: 4px solid #555;
+                    border-radius: 10px; padding: 14px 16px; cursor: pointer;
+                    transition: transform .15s, box-shadow .15s, border-color .15s; }
+        .sow-card:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,.35); }
+        .sow-card.status-critical { border-left-color: #f44336; }
+        .sow-card.status-warning { border-left-color: #ff9800; }
+        .sow-card.status-ok { border-left-color: #4CAF50; }
+        .sow-top { display: flex; justify-content: space-between; gap: 10px; }
+        .sow-name { font-size: 14.5px; font-weight: 600; }
+        .sow-meta { font-size: 11.5px; color: #8a949e; margin-top: 3px; }
+        .sow-risk { text-align: right; flex: 0 0 auto; }
+        .sow-risk .n { font-size: 20px; font-weight: 700; line-height: 1; }
+        .sow-risk .n.critical { color: #f44336; } .sow-risk .n.warning { color: #ff9800; }
+        .sow-risk .n.ok { color: #4CAF50; }
+        .sow-risk .l { font-size: 9px; color: #7f8b96; text-transform: uppercase; letter-spacing: .06em; margin-top: 3px; }
+        .sow-rows { margin-top: 12px; display: grid; gap: 7px; }
+        .sow-row { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; font-size: 12px; color: #aab4be; }
+        .sow-row .lab { color: #6f7a85; min-width: 88px; font-size: 11px; }
+        .pill { display: inline-block; padding: 2px 8px; border-radius: 999px;
+                font-size: 10.5px; border: 1px solid #2f3842; color: #aab4be; }
+        .pill.good { color: #8bd694; border-color: #2e5d35; }
+        .pill.mid { color: #ffcc80; border-color: #6b4a1a; }
+        .pill.bad { color: #ef9a9a; border-color: #6b2626; }
+        .pill.acc { color: #8bd694; border-color: #2e5d35; background: rgba(76,175,80,.12); }
+
+        .agro-block { margin-top: 18px; }
+        .agro-title { font-size: 12px; text-transform: uppercase; letter-spacing: .08em;
+                      color: #7f8b96; margin-bottom: 8px; }
+        .agro-card { background: #1a1f26; border: 1px solid #2a3138; border-radius: 10px; padding: 14px 16px; }
+        .npk-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+        .npk-item { background: #151a20; border: 1px solid #262e36; border-radius: 8px; padding: 10px; }
+        .npk-pct { font-size: 19px; font-weight: 700; line-height: 1; }
+        .npk-name { font-size: 10.5px; color: #7f8b96; margin-top: 3px; }
+        .npk-fact { font-size: 10.5px; color: #8a949e; margin-top: 6px; line-height: 1.35; }
+        .agro-meta { display: flex; flex-wrap: wrap; gap: 14px; font-size: 11.5px; color: #8a949e; margin-top: 10px; }
+        .agro-note { font-size: 12px; color: #c7d0d9; background: #151a20; border-left: 2px solid #4CAF50;
+                     padding: 9px 11px; border-radius: 0 8px 8px 0; margin-top: 10px; line-height: 1.45; }
+        .timeline { margin-top: 4px; }
+        .tl-row { display: flex; gap: 10px; padding: 6px 0; font-size: 12px;
+                  border-top: 1px dashed #242b33; align-items: baseline; }
+        .tl-row:first-child { border-top: none; }
+        .tl-dot { width: 8px; height: 8px; border-radius: 50%; background: #3a424c; margin-top: 4px; flex: 0 0 auto; }
+        .tl-row.now .tl-dot { background: #4CAF50; box-shadow: 0 0 0 4px rgba(76,175,80,.15); }
+        .tl-row.done { color: #7f8b96; }
+        .tl-name { min-width: 130px; color: #e6e6e6; }
+        .tl-row.done .tl-name { color: #9aa4ae; }
+        .tl-dates { color: #7f8b96; font-size: 11px; }
+        .tl-status { margin-left: auto; font-size: 10px; color: #7f8b96; }
+        .tl-row.now .tl-status { color: #8bd694; }
+        .veg-chart { width: 100%; height: auto; display: block; }
+        .veg-legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 10.5px; color: #8a949e; margin-top: 8px; }
+        .veg-legend i { display: inline-block; width: 10px; height: 3px; border-radius: 2px;
+                        margin-right: 5px; vertical-align: 2px; }
+        .veg-now { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; }
+        .veg-now div { background: #151a20; border: 1px solid #262e36; border-radius: 8px;
+                       padding: 8px; text-align: center; }
+        .veg-now .v { font-size: 15px; font-weight: 600; }
+        .veg-now .k { font-size: 9.5px; color: #7f8b96; margin-top: 2px; }
+        .spray-row { display: flex; gap: 10px; padding: 8px 0; border-top: 1px solid #242b33;
+                     font-size: 12px; align-items: flex-start; }
+        .spray-row:first-child { border-top: none; }
+        .spray-row.done { opacity: .6; }
+        .spray-date { min-width: 48px; color: #7f8b96; font-size: 11px; }
+        .spray-body { flex: 1; }
+        .spray-prod { color: #e6e6e6; }
+        .spray-meta { color: #7f8b96; font-size: 10.5px; margin-top: 2px; }
+        .kind { font-size: 9px; text-transform: uppercase; letter-spacing: .05em; padding: 1px 6px;
+                border-radius: 5px; border: 1px solid #2f3842; color: #aab4be; }
+        .rot-scroll { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+        .rot-cell { flex: 0 0 auto; width: 104px; background: #151a20; border: 1px solid #262e36;
+                    border-radius: 8px; padding: 9px; cursor: pointer; text-align: left;
+                    color: #e6e6e6; font-family: inherit; }
+        .rot-cell.active { border-color: #4CAF50; background: rgba(76,175,80,.12); }
+        .rot-year { font-size: 10px; color: #7f8b96; }
+        .rot-crop { font-size: 11.5px; margin-top: 3px; line-height: 1.25; }
+        .rot-why { font-size: 12px; color: #aab4be; margin-top: 10px; line-height: 1.45; }
+
+        /* ===== Вкладки карточки поля, техкарта, севооборот ===== */
+        .ftabs { display: flex; gap: 2px; overflow-x: auto; margin: 8px 0 16px;
+                 border-bottom: 1px solid #2a3138; scrollbar-width: none; }
+        .ftabs::-webkit-scrollbar { display: none; }
+        .ftab { background: none; border: none; border-bottom: 2px solid transparent;
+                color: #8a949e; font-family: inherit; font-size: 12.5px; padding: 8px 12px;
+                cursor: pointer; white-space: nowrap; }
+        .ftab:hover { color: #e6e6e6; }
+        .ftab.active { color: #4CAF50; border-bottom-color: #4CAF50; font-weight: 600; }
+
+        .tech-row { display: flex; gap: 10px; padding: 8px 0; border-top: 1px solid #242b33;
+                    font-size: 12px; align-items: flex-start; }
+        .tech-row:first-child { border-top: none; }
+        .tech-row.done { opacity: .6; }
+        .tech-date { min-width: 48px; color: #7f8b96; font-size: 11px; }
+        .tech-body { flex: 1; }
+        .tech-title { color: #e6e6e6; }
+        .tech-meta { color: #7f8b96; font-size: 10.5px; margin-top: 2px; }
+
+        .rot-grid { overflow-x: auto; padding: 6px 8px; }
+        .rot-grid table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .rot-grid th, .rot-grid td { padding: 8px 9px; border-bottom: 1px solid #242b33;
+                                     text-align: left; white-space: nowrap; }
+        .rot-grid th { color: #7f8b96; font-size: 10.5px; text-transform: uppercase;
+                       letter-spacing: .05em; position: sticky; top: 0; background: #1a1f26; }
+        .rot-grid tr:last-child td { border-bottom: none; }
+        .rot-field-btn { display: flex; flex-direction: column; gap: 2px; background: none;
+                         border: none; color: #e6e6e6; font: inherit; cursor: pointer; text-align: left; }
+        .rot-field-btn span { color: #7f8b96; font-size: 10.5px; }
+        .rot-cell-btn { display: flex; align-items: center; gap: 7px; background: none; border: none;
+                        color: #e6e6e6; font: inherit; cursor: pointer; padding: 2px 0; }
+        .rot-cell-btn.current { color: #8bd694; font-weight: 600; }
+        .rot-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+
+        /* ===== Планшет и телефон ===== */
+        @media (max-width: 900px) {
+            .view { flex-direction: column; }
+            .sidebar { width: 100%; max-height: 34vh; border-right: none; border-bottom: 1px solid #2a3138; }
+            .state-view { padding: 14px 12px 40px; }
+            .state-kpis { grid-template-columns: repeat(2, 1fr); }
+            .state-grid { grid-template-columns: 1fr; }
+            .npk-grid { grid-template-columns: 1fr; }
+            .veg-now { grid-template-columns: repeat(2, 1fr); }
+            .tabs { overflow-x: auto; }
+        }
+
+        /* ===== Телефон ===== */
+        @media (max-width: 640px) {
+            body { font-size: 14px; }
+
+            /* Шапка: логотип строкой, ниже — все вкладки на всю ширину */
+            .top-bar { flex-wrap: wrap; gap: 4px 8px; padding: 8px 10px 6px; align-items: center; }
+            .logo { flex: 1 0 100%; font-size: 14px; white-space: nowrap; }
+            .tabs { flex: 1 0 100%; display: flex; justify-content: space-between;
+                    gap: 2px; overflow-x: auto; scrollbar-width: none; }
+            .tabs::-webkit-scrollbar { display: none; }
+            .tab { flex: 0 0 auto; padding: 6px 8px; font-size: 12px; white-space: nowrap; }
+            .t-full { display: none; }
+            .t-short { display: inline; }
+
+            /* Алерты компактнее */
+            .alert-banner { font-size: 11px; padding: 6px 10px; gap: 8px; align-items: flex-start; }
+            .alert-banner .icon { font-size: 14px; }
+            .alert-banner .close { width: 20px; height: 20px; font-size: 12px; flex: 0 0 auto; }
+
+            /* Список полей — горизонтальная лента, а не полэкрана */
+            .sidebar { max-height: none; }
+            .sidebar-header { padding: 8px 12px; display: flex; align-items: baseline; gap: 8px; }
+            .sidebar-header h2 { font-size: 12px; }
+            .sidebar-header p { font-size: 10.5px; margin: 0; }
+            .fields-list { display: flex; gap: 8px; overflow-x: auto; overflow-y: hidden;
+                           padding: 8px 10px 10px; scrollbar-width: none; }
+            .fields-list::-webkit-scrollbar { display: none; }
+            .field-card { flex: 0 0 auto; min-width: 216px; max-width: 240px; margin: 0; }
+            .field-card:hover { transform: none; }
+
+            /* Контент */
+            .main { padding: 12px 12px 96px; }
+            .field-header { flex-direction: column; align-items: stretch; gap: 10px; }
+            .field-title h2 { font-size: 16px; line-height: 1.3; }
+            .field-header .subtitle { font-size: 11.5px; line-height: 1.45; }
+            .field-stamp { font-size: 12px; padding: 4px 10px; margin-top: 7px; }
+            .action-btn { width: 100%; font-size: 12.5px; padding: 9px 12px; }
+            .section-title { font-size: 13px; margin: 16px 0 8px; }
+            .metrics { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+            .metric { padding: 10px; }
+            .metric .value { font-size: 18px; }
+            .metric .label { font-size: 10px; }
+
+            .weather-row { display: flex; overflow-x: auto; gap: 8px; padding-bottom: 6px; scrollbar-width: none; }
+            .weather-row::-webkit-scrollbar { display: none; }
+            .weather-card { flex: 0 0 auto; min-width: 96px; padding: 8px; }
+            .weather-card .wc-icon { font-size: 28px; }
+            .weather-card .wc-temp { font-size: 18px; }
+            .weather-card .wc-desc { font-size: 10.5px; }
+
+            .visuals { grid-template-columns: 1fr; }
+            .visual-box { height: 210px; }
+            .placeholder { padding: 24px 12px; font-size: 13px; }
+
+            /* Состояние полей */
+            .state-view { padding: 12px 10px 96px; }
+            .state-head { gap: 4px; }
+            .state-title { font-size: 16px; }
+            .state-sub { font-size: 11px; }
+            .state-kpis { gap: 8px; }
+            .state-kpi { padding: 10px; }
+            .state-kpi .n { font-size: 18px; }
+            .state-kpi .l { font-size: 9.5px; }
+            .sow-card { padding: 12px; }
+            .sow-name { font-size: 13.5px; }
+            .sow-meta { font-size: 10.5px; }
+            .sow-risk .n { font-size: 18px; }
+            .sow-row { font-size: 11.5px; }
+            .sow-row .lab { min-width: 74px; font-size: 10px; }
+            .agro-card { padding: 12px; }
+            .agro-title { font-size: 11px; }
+            .agro-meta { gap: 8px; font-size: 10.5px; }
+            .tl-name { min-width: 104px; }
+            .tl-dates { font-size: 10px; }
+            .spray-meta { font-size: 10px; }
+            .rot-cell { width: 92px; }
+            .rot-crop { font-size: 10.5px; }
+
+            /* Вкладки поля и сетка севооборота */
+            .ftabs { margin: 6px 0 12px; }
+            .ftab { padding: 7px 9px; font-size: 12px; }
+            .tech-meta { font-size: 10px; }
+            .rot-grid { padding: 2px; }
+            .rot-grid th, .rot-grid td { padding: 7px 8px; font-size: 11px; }
+            .rot-field-btn b { font-size: 11.5px; }
+
+            /* Чат — на весь экран */
+            .chat-modal-overlay { padding: 0; align-items: stretch; justify-content: stretch; }
+            .chat-modal { width: 100%; max-width: 100%; height: 100dvh; max-height: 100dvh;
+                          border-radius: 0; margin: 0; }
+            .chat-modal-overlay.minimized .chat-modal {
+                width: calc(100vw - 16px); max-width: calc(100vw - 16px);
+                height: 58dvh; max-height: 58dvh; margin: 0 8px 84px 8px; border-radius: 12px;
+            }
+            .chat-input { padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+            .modal-header { padding: 12px 14px; }
+            .modal-header h3 { font-size: 14px; }
+            .chat-messages { padding: 12px 12px; }
+            .msg { max-width: 92%; font-size: 12.5px; }
+            .quick-actions { padding: 0 12px 8px; gap: 6px; }
+            .quick-btn { padding: 6px 10px; font-size: 11.5px; }
+            .chat-input { padding: 10px 12px 12px; gap: 8px; }
+            .chat-input input { padding: 10px 12px; font-size: 13px; }
+            .chat-input button { padding: 10px 14px; font-size: 13px; }
+            .chat-fab { right: 10px; bottom: 12px; padding: 7px 14px 7px 7px; gap: 9px; border-radius: 15px; }
+            .chat-fab .fab-icon { width: 34px; height: 34px; font-size: 16px; border-radius: 10px; }
+            .chat-fab .fab-title { font-size: 12px; }
+            .chat-fab .fab-sub { font-size: 9.5px; }
+        }
+
+        /* ===== Крупнее интерфейс на десктопе ===== */
+        @media (min-width: 901px) {
+            .logo { font-size: 18px; }
+            .tab { font-size: 14.5px; padding: 8px 18px; }
+            .alert-banner { font-size: 14px; padding: 10px 24px; }
+
+            .sidebar { width: 318px; }
+            .sidebar-header { padding: 16px 18px; }
+            .sidebar-header h2 { font-size: 16px; }
+            .sidebar-header p { font-size: 12.5px; }
+            .fields-list { padding: 12px; }
+            .field-card { padding: 12px 14px; margin-bottom: 10px; }
+            .field-card .name { font-size: 15px; }
+            .field-card .meta { font-size: 12.5px; }
+            .risk-badge { font-size: 12px; padding: 3px 7px; }
+
+            .main { padding: 24px 30px; }
+            .field-title h2 { font-size: 25px; }
+            .field-title .subtitle { font-size: 13.5px; }
+            .field-stamp { font-size: 14.5px; padding: 7px 14px; margin-top: 10px; }
+            .status-pill { font-size: 12px; padding: 4px 12px; }
+            .action-btn { font-size: 14.5px; padding: 11px 18px; }
+            .section-title { font-size: 12.5px; letter-spacing: 0.7px; }
+
+            .metric { padding: 13px 15px; }
+            .metric .label { font-size: 12px; }
+            .metric .value { font-size: 24px; }
+
+            .weather-card { padding: 14px; }
+            .weather-card .wc-day { font-size: 12px; }
+            .weather-card .wc-icon { font-size: 48px; }
+            .weather-card .wc-desc { font-size: 13.5px; }
+            .weather-card .wc-temp { font-size: 26px; }
+            .weather-card .wc-temp small { font-size: 16px; }
+            .weather-card .wc-meta { font-size: 12px; }
+            .weather-source { font-size: 12.5px; }
+
+            .rec-item { padding: 13px 15px; }
+            .rec-item .rec-icon { font-size: 18px; }
+            .rec-item .rec-text { font-size: 14px; }
+            .culture-card { font-size: 14px; }
+
+            .ftab { font-size: 14.5px; padding: 10px 16px; }
+            .agro-title { font-size: 13px; }
+            .npk-pct { font-size: 23px; }
+            .npk-name { font-size: 12px; }
+            .npk-fact { font-size: 12.5px; }
+            .agro-meta { font-size: 13px; }
+            .agro-note { font-size: 13.5px; }
+            .tl-row { font-size: 13.5px; padding: 8px 0; }
+            .tl-name { min-width: 165px; }
+            .tl-dates { font-size: 12.5px; }
+            .tl-status { font-size: 11.5px; }
+            .spray-row, .tech-row { font-size: 13.5px; padding: 10px 0; }
+            .spray-prod, .tech-title { font-size: 13.5px; }
+            .spray-meta, .tech-meta { font-size: 12px; }
+            .kind { font-size: 10.5px; }
+            .rot-grid table { font-size: 13.5px; }
+            .rot-grid th { font-size: 12px; }
+            .rot-field-btn b { font-size: 14px; }
+            .rot-field-btn span { font-size: 12px; }
+            .rot-cell-btn { font-size: 13.5px; }
+            .rot-dot { width: 9px; height: 9px; }
+
+            .state-title { font-size: 22px; }
+            .state-sub { font-size: 13px; }
+            .state-kpi { padding: 14px 16px; }
+            .state-kpi .n { font-size: 26px; }
+            .state-kpi .l { font-size: 12px; }
+            .sow-card { padding: 16px 18px; }
+            .sow-name { font-size: 16.5px; }
+            .sow-meta { font-size: 13px; }
+            .sow-risk .n { font-size: 22px; }
+            .sow-row { font-size: 13.5px; }
+            .sow-row .lab { font-size: 12px; min-width: 100px; }
+            .pill { font-size: 12px; }
+
+            .placeholder { font-size: 15px; }
+            .msg { font-size: 14.5px; }
+            .modal-header h3 { font-size: 17px; }
+            .chat-input input { font-size: 14.5px; padding: 12px 14px; }
+            .chat-input button { font-size: 14.5px; }
+            .quick-btn { font-size: 13.5px; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="alert-banner" id="alertBanner">
+        <span class="icon">⚠️</span>
+        <span class="text" id="alertText"></span>
+        <button class="close" onclick="hideAlert()">×</button>
+    </div>
+
+    <div class="top-bar">
+        <div class="logo">🌱 AgroTech AI</div>
+        <div class="tabs">
+            <button class="tab active" data-view="dashboard" onclick="switchView('dashboard')">🌾 <span class="t-full">Поля</span><span class="t-short">Поля</span></button>
+            <button class="tab" data-view="map" onclick="switchView('map')">🗺 <span class="t-full">Карта</span><span class="t-short">Карта</span></button>
+            <button class="tab" data-view="state" onclick="switchView('state')">📊 <span class="t-full">Мониторинг</span><span class="t-short">Сводка</span></button>
+            <button class="tab" data-view="rotation" onclick="switchView('rotation')">🔁 <span class="t-full">Севооборот</span><span class="t-short">План</span></button>
+        </div>
+    </div>
+
+    <div class="view active" id="view-dashboard">
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h2>Поля хозяйства</h2>
+                <p id="fieldsCount">Загрузка...</p>
+            </div>
+            <div class="fields-list" id="fieldsList">Загрузка полей...</div>
+        </aside>
+
+        <div class="main" id="mainArea">
+            <div class="placeholder">
+                <div class="icon">🌾</div>
+                <div>Выберите поле из списка</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="view" id="view-map">
+        <div class="map-full"><div id="allFieldsMap"></div></div>
+    </div>
+
+    <div class="view" id="view-state">
+        <div class="state-view" id="stateView">
+            <div class="loading-field">
+                <div class="spinner"></div>
+                <div style="color:#888;font-size:13px">Загружаю состояние посевов…</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="view" id="view-rotation">
+        <div class="state-view" id="rotationView">
+            <div class="loading-field">
+                <div class="spinner"></div>
+                <div style="color:#888;font-size:13px">Загружаю севооборот…</div>
+            </div>
+        </div>
+    </div>
+
+    <button class="chat-fab" id="chatFab" onclick="openChat()" style="display:none">
+        <span class="fab-icon">💬</span>
+        <span class="fab-text">
+            <span class="fab-title">ИИ-агроном</span>
+            <span class="fab-sub">по данным поля</span>
+        </span>
+        <span class="fab-pulse"></span>
+    </button>
+
+    <div class="chat-modal-overlay" id="chatModal" onclick="if(event.target === this) closeChat()">
+        <div class="chat-modal" id="chatModalBox" onclick="event.stopPropagation()">
+            <div class="modal-header" id="modalHeader">
+                <div class="modal-header-left">
+                    <h3>💬 ИИ-агроном <span class="save-badge" id="saveBadge" style="display:none"></span></h3>
+                    <div class="sub" id="chatSubtitle">Выберите поле</div>
+                </div>
+                <div class="modal-header-actions">
+                    <button class="modal-icon-btn" id="minimizeBtn" onclick="toggleMinimize()" title="Свернуть в окошко">⤵</button>
+                    <button class="modal-icon-btn" onclick="closeChat()" title="Закрыть (Esc)">×</button>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div class="chat-messages" id="chatMessages">
+                    <div class="msg system">Задайте вопрос ИИ-агроному про выбранное поле</div>
+                </div>
+                <div class="quick-actions">
+                    <button class="quick-btn" onclick="quickAsk('Что делать с этим полем прямо сейчас?')">Что делать?</button>
+                    <button class="quick-btn" onclick="quickAsk('Какие риски самые критичные?')">Риски</button>
+                    <button class="quick-btn" onclick="quickAsk('Нужно ли вносить удобрения?')">Удобрения</button>
+                    <button class="quick-btn" onclick="quickAsk('Когда лучше убирать урожай?')">Уборка</button>
+                </div>
+                <div class="chat-input">
+                    <input type="text" id="question" placeholder="Задайте вопрос агенту..." autocomplete="off">
+                    <button id="askBtn" onclick="askAI()">Спросить</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let fields = [];
+        let selectedFieldId = null;
+        let map = null, mapMarker = null, riskChart = null;
+        let allFieldsMap = null;
+        let chatHistory = [];
+        let currentField = null;
+        let compareSort = { key: 'status', dir: 'desc' };
+
+        const CHAT_STORAGE_KEY = 'agrotech_chat_history_v1';
+        const CHAT_TTL_HOURS = 24;
+
+        function loadAllChats() {
+            try {
+                const raw = localStorage.getItem(CHAT_STORAGE_KEY);
+                if (!raw) return {};
+                const data = JSON.parse(raw);
+                const now = Date.now();
+                const cleaned = {};
+                Object.entries(data).forEach(([fieldId, item]) => {
+                    if (item.savedAt && (now - item.savedAt) < CHAT_TTL_HOURS * 3600 * 1000) {
+                        cleaned[fieldId] = item;
+                    }
+                });
+                return cleaned;
+            } catch (e) { return {}; }
+        }
+
+        function saveChatForField(fieldId, history) {
+            try {
+                const all = loadAllChats();
+                if (history.length === 0) delete all[fieldId];
+                else all[fieldId] = { messages: history.slice(-40), savedAt: Date.now() };
+                localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(all));
+            } catch (e) {}
+        }
+
+        function getChatForField(fieldId) {
+            const all = loadAllChats();
+            return all[fieldId]?.messages || [];
+        }
+
+        const CULTURE_INFO = {
+            "Пшеница озимая": { "enemies": "мучнистая роса, ржавчина, клоп-черепашка", "harvest": "конец июня – начало июля", "note": "Уборка при влажности зерна ≤ 14-16%. Чувствительна к переувлажнению в фазе колошения." },
+            "Кукуруза": { "enemies": "кукурузный мотылёк, пузырчатая головня, тля", "harvest": "сентябрь – октябрь", "note": "Требовательна к теплу. Критический период — выметывание и цветение." },
+            "Подсолнечник": { "enemies": "заразиха, ложная мучнистая роса, огнёвка", "harvest": "август – сентябрь", "note": "Нельзя возвращать на одно поле чаще 1 раза в 7 лет." },
+            "Соя": { "enemies": "паутинный клещ, соевая плодожорка, фузариоз", "harvest": "сентябрь – октябрь", "note": "Нуждается в симбиозе с клубеньковыми бактериями." },
+            "Сахарная свёкла": { "enemies": "свекловичная блошка, тля, церкоспороз", "harvest": "сентябрь – октябрь", "note": "Требовательна к плодородию почвы. Отзывчива на бор и марганец." },
+        };
+
+        async function loadFields() {
+            try {
+                const res = await fetch('/api/fields');
+                fields = await res.json();
+                document.getElementById('fieldsCount').textContent = `${fields.length} полей`;
+                renderFieldsList();
+                loadAlerts();
+            } catch (err) {
+                document.getElementById('fieldsList').innerHTML =
+                    '<div style="color:#f66;padding:20px;text-align:center">Ошибка загрузки</div>';
+            }
+        }
+
+        async function loadAlerts() {
+            try {
+                const res = await fetch('/api/alerts');
+                const alerts = await res.json();
+                if (alerts.length > 0) {
+                    const text = alerts.map(a => `${a.field_name} (${a.culture}): риск ${a.risk_name} ${a.risk_value}%`).join(' • ');
+                    document.getElementById('alertText').textContent = `Критичные поля (${alerts.length}): ${text}`;
+                    document.getElementById('alertBanner').classList.add('visible');
+                }
+            } catch (e) {}
+        }
+
+        function hideAlert() { document.getElementById('alertBanner').classList.remove('visible'); }
+
+        function switchView(view) {
+            document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.getElementById('view-' + view).classList.add('active');
+            document.querySelector(`.tab[data-view="${view}"]`).classList.add('active');
+            if (location.hash !== '#' + view && !location.hash.startsWith('#field/')) {
+                history.replaceState(null, '', '#' + view);
+            }
+            if (view === 'map') setTimeout(initAllFieldsMap, 50);
+            if (view === 'state') renderState(true);
+            if (view === 'rotation') renderRotation(true);
+        }
+
+        function renderFieldsList() {
+            const list = document.getElementById('fieldsList');
+            if (fields.length === 0) {
+                list.innerHTML = '<div style="color:#666;text-align:center;padding:20px">Полей нет</div>';
+                return;
+            }
+            const badge = (v) => {
+                const cls = v >= 70 ? 'high' : (v >= 40 ? 'mid' : 'low');
+                return `<span class="risk-badge ${cls}">${v}%</span>`;
+            };
+            list.innerHTML = fields.map(f => `
+                <div class="field-card status-${f.status} ${f.id === selectedFieldId ? 'active' : ''}"
+                     onclick="selectField('${f.id}')">
+                    <div class="name">${f.name} — ${f.culture}</div>
+                    <div class="meta">${f.region} • ${f.area_ha} га • ${f.growth_stage}</div>
+                    <div class="risks">
+                        <span>🦠 ${badge(f.risks.disease)}</span>
+                        <span>☀️ ${badge(f.risks.drought)}</span>
+                        <span>🐛 ${badge(f.risks.pests)}</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function selectField(id) {
+            selectedFieldId = id;
+            chatHistory = getChatForField(id);
+            renderFieldsList();
+
+            document.getElementById('mainArea').innerHTML = `
+                <div class="loading-field">
+                    <div class="spinner"></div>
+                    <div style="color:#888;font-size:13px">Загружаю данные поля...</div>
+                </div>
+            `;
+
+            try {
+                const res = await fetch('/api/fields/' + id);
+                const f = await res.json();
+                currentField = f;
+                document.title = `${f.name} — AgroTech AI`;
+                renderFieldMain(f);
+
+                document.getElementById('chatFab').style.display = 'flex';
+                document.getElementById('chatSubtitle').textContent = `${f.name} • ${f.culture}, ${f.region}`;
+                renderChatMessages();
+                document.getElementById('question').value = '';
+                document.getElementById('question').disabled = false;
+                document.getElementById('askBtn').disabled = false;
+                updateSaveBadge();
+            } catch (err) {
+                document.getElementById('mainArea').innerHTML = `
+                    <div class="placeholder">
+                        <div class="icon">⚠️</div>
+                        <div style="color:#f66">Ошибка загрузки: ${err.message}</div>
+                    </div>
+                `;
+            }
+        }
+
+        function renderChatMessages() {
+            const messages = document.getElementById('chatMessages');
+            if (chatHistory.length === 0) {
+                messages.innerHTML = `<div class="msg system">Консультация по полю <b>${currentField.name}</b> (${currentField.culture}). Задайте вопрос или используйте быстрые кнопки.</div>`;
+            } else {
+                messages.innerHTML = chatHistory.map(m => {
+                    if (m.role === 'user') return `<div class="msg user">${m.text}</div>`;
+                    if (m.role === 'ai') return `<div class="msg ai">${m.text}</div>`;
+                    return `<div class="msg system">${m.text}</div>`;
+                }).join('');
+            }
+            setTimeout(() => { messages.scrollTop = messages.scrollHeight; }, 50);
+        }
+
+        function updateSaveBadge() {
+            const badge = document.getElementById('saveBadge');
+            if (chatHistory.length > 0) {
+                badge.style.display = 'inline-block';
+                badge.textContent = `💾 ${chatHistory.length} сообщ.`;
+            } else {
+                badge.style.display = 'none';
+            }
+        }
+
+        // ==== МОДАЛЬНОЕ ОКНО ====
+        function openChat() {
+            if (!selectedFieldId) return;
+            document.getElementById('chatModal').classList.add('visible');
+            setTimeout(() => document.getElementById('question').focus(), 100);
+        }
+
+        function closeChat() {
+            const overlay = document.getElementById('chatModal');
+            const box = document.getElementById('chatModalBox');
+            overlay.classList.remove('visible');
+            box.style.position = '';
+            box.style.left = '';
+            box.style.top = '';
+            box.style.right = '';
+            box.style.bottom = '';
+            box.style.margin = '';
+        }
+
+        function toggleMinimize() {
+            const overlay = document.getElementById('chatModal');
+            const box = document.getElementById('chatModalBox');
+            const btn = document.getElementById('minimizeBtn');
+
+            if (overlay.classList.contains('minimized')) {
+                overlay.classList.remove('minimized');
+                box.style.position = '';
+                box.style.left = '';
+                box.style.top = '';
+                box.style.right = '';
+                box.style.bottom = '';
+                box.style.margin = '';
+                btn.textContent = '⤵';
+                btn.title = 'Свернуть в окошко';
+            } else {
+                overlay.classList.add('minimized');
+                box.style.position = '';
+                box.style.left = '';
+                box.style.top = '';
+                box.style.right = '';
+                box.style.bottom = '';
+                box.style.margin = '';
+                btn.textContent = '⤴';
+                btn.title = 'Развернуть на весь экран';
+            }
+        }
+
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Escape') {
+                const overlay = document.getElementById('chatModal');
+                if (overlay.classList.contains('visible')) {
+                    if (overlay.classList.contains('minimized')) closeChat();
+                    else toggleMinimize();
+                }
+            }
+        });
+
+        // ==== DRAG МИНИМИЗИРОВАННОГО ОКНА (с requestAnimationFrame) ====
+        let dragState = { active: false, offsetX: 0, offsetY: 0, rafId: null, lastX: 0, lastY: 0 };
+
+        document.getElementById('modalHeader').addEventListener('mousedown', (e) => {
+            const overlay = document.getElementById('chatModal');
+            if (!overlay.classList.contains('minimized')) return;
+            if (e.target.closest('.modal-icon-btn')) return;
+
+            const box = document.getElementById('chatModalBox');
+            const rect = box.getBoundingClientRect();
+
+            dragState.active = true;
+            dragState.offsetX = e.clientX - rect.left;
+            dragState.offsetY = e.clientY - rect.top;
+            dragState.lastX = e.clientX;
+            dragState.lastY = e.clientY;
+
+            box.classList.add('dragging');
+            box.style.position = 'fixed';
+            box.style.left = rect.left + 'px';
+            box.style.top = rect.top + 'px';
+            box.style.margin = '0';
+            box.style.right = 'auto';
+            box.style.bottom = 'auto';
+
+            e.preventDefault();
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!dragState.active) return;
+            dragState.lastX = e.clientX;
+            dragState.lastY = e.clientY;
+
+            if (dragState.rafId) return;
+            dragState.rafId = requestAnimationFrame(() => {
+                const box = document.getElementById('chatModalBox');
+                box.style.left = (dragState.lastX - dragState.offsetX) + 'px';
+                box.style.top = (dragState.lastY - dragState.offsetY) + 'px';
+                dragState.rafId = null;
+            });
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (!dragState.active) return;
+            dragState.active = false;
+            if (dragState.rafId) {
+                cancelAnimationFrame(dragState.rafId);
+                dragState.rafId = null;
+            }
+            const box = document.getElementById('chatModalBox');
+            box.classList.remove('dragging');
+        });
+
+        // ==== РЕНДЕР ПОЛЯ ====
+        let fieldTab = 'overview';
+        const FIELD_TABS = [
+            ['overview', 'Обзор'], ['soil', 'Почва'], ['phases', 'Фазы'],
+            ['works', 'Работы'], ['protection', 'Защита'], ['ndvi', 'NDVI'],
+            ['rotation', 'Севооборот'],
+        ];
+
+        function setFieldTab(tab) {
+            fieldTab = tab;
+            if (currentField) renderFieldMain(currentField);
+            const main = document.getElementById('mainArea');
+            if (main) main.scrollTop = 0;
+        }
+
+        function techCardBlock(f) {
+            const tc = f.tech_card;
+            if (!tc || !tc.operations.length) return '';
+            const rows = tc.operations.map(o => `<div class="tech-row ${o.status === 'проведено' ? 'done' : ''}">
+                <div class="tech-date">${shortDate(o.date)}</div>
+                <div class="tech-body">
+                    <div class="tech-title"><span class="kind">${o.kind}</span> ${o.title}</div>
+                    <div class="tech-meta">${o.detail} · ${o.cost_rub_ha} ₽/га · ${o.status}${o.status === 'план' ? ' через ' + o.days_left + ' дн' : ''}</div>
+                </div></div>`).join('');
+            return agroBlock('🧾 Технологическая карта',
+                `${rows}
+                 <div class="agro-meta">
+                    <span>Выполнено ${tc.done} · в плане ${tc.planned}</span>
+                    <span>${tc.cost_done_rub_ha} ₽/га факт · ${tc.cost_planned_rub_ha} ₽/га план</span>
+                 </div>`);
+        }
+
+        function overviewHtml(f) {
+            const tempCls = (f.temperature >= f.optimal_temp[0] && f.temperature <= f.optimal_temp[1]) ? 'ok'
+                          : (f.temperature < f.optimal_temp[0] - 5 || f.temperature > f.optimal_temp[1] + 5) ? 'danger' : 'warn';
+            const moistCls = (f.moisture >= f.optimal_moisture[0] && f.moisture <= f.optimal_moisture[1]) ? 'ok'
+                           : (f.moisture < f.optimal_moisture[0] - 10 || f.moisture > f.optimal_moisture[1] + 10) ? 'danger' : 'warn';
+            const rainCls = f.rainfall_7d >= 5 ? 'ok' : f.rainfall_7d >= 2 ? 'warn' : 'danger';
+            const disCls = f.risks.disease >= 70 ? 'danger' : f.risks.disease >= 40 ? 'warn' : 'ok';
+            const drouCls = f.risks.drought >= 70 ? 'danger' : f.risks.drought >= 40 ? 'warn' : 'ok';
+            const pestCls = f.risks.pests >= 70 ? 'danger' : f.risks.pests >= 40 ? 'warn' : 'ok';
+
+            const days = f.forecast?.days || [];
+            const weatherHTML = days.length ? `
+                <div class="section-title">🌤 Прогноз погоды на 5 дней</div>
+                <div class="weather-row">
+                    ${days.map((d, i) => `<div class="weather-card ${i === 0 ? 'today' : ''}">
+                        <div class="wc-day">${i === 0 ? 'Сегодня' : d.weekday + ' ' + d.date.slice(5)}</div>
+                        <div class="wc-icon">${d.icon}</div>
+                        <div class="wc-desc">${d.description}</div>
+                        <div class="wc-temp">${Math.round(d.temp_max)}° <small>${Math.round(d.temp_min)}°</small></div>
+                        <div class="wc-meta">
+                            <span>💧 ${d.precipitation > 0 ? d.precipitation + ' мм' : 'нет'}</span>
+                            <span>💨 ${d.wind} м/с</span>
+                        </div></div>`).join('')}
+                </div>
+                <div class="weather-source">Источник: ${f.forecast?.source || ''}</div>` : '';
+
+            const recs = buildRecommendations(f);
+            const culture = CULTURE_INFO[f.culture] || null;
+            const cultureHTML = culture ? `
+                <div class="section-title">📚 Сводка по культуре</div>
+                <div class="culture-card">
+                    <h4>${f.culture}</h4>
+                    <p><span class="highlight">Типичные угрозы:</span> ${culture.enemies}</p>
+                    <p><span class="highlight">Сроки уборки:</span> ${culture.harvest}</p>
+                    <p><span class="highlight">Особенности:</span> ${culture.note}</p>
+                </div>` : '';
+
+            return `
+                <div class="section-title">📊 Текущие показатели</div>
+                <div class="metrics">
+                    <div class="metric ${tempCls}"><div class="label">🌡 Температура</div><div class="value">${f.temperature}°C</div></div>
+                    <div class="metric ${moistCls}"><div class="label">💧 Влажность</div><div class="value">${f.moisture}%</div></div>
+                    <div class="metric ${rainCls}"><div class="label">🌧 Осадки 7д</div><div class="value">${f.rainfall_7d} мм</div></div>
+                    <div class="metric ${disCls}"><div class="label">🦠 Болезни</div><div class="value">${f.risks.disease}%</div></div>
+                    <div class="metric ${drouCls}"><div class="label">☀️ Засуха</div><div class="value">${f.risks.drought}%</div></div>
+                    <div class="metric ${pestCls}"><div class="label">🐛 Вредители</div><div class="value">${f.risks.pests}%</div></div>
+                </div>
+                ${weatherHTML}
+                <div class="section-title">💡 Рекомендации ML-модели</div>
+                <div class="recs-grid">
+                    ${recs.map(r => `<div class="rec-item ${r.type}">
+                        <div class="rec-icon">${r.icon}</div>
+                        <div class="rec-text">${r.text}</div></div>`).join('')}
+                </div>
+                <div class="section-title">🗺 Расположение и риски</div>
+                <div class="visuals">
+                    <div class="visual-box"><div id="map"></div></div>
+                    <div class="visual-box"><div class="chart-container"><canvas id="riskChart"></canvas></div></div>
+                </div>
+                ${cultureHTML}`;
+        }
+
+        function fieldTabContent(f) {
+            switch (fieldTab) {
+                case 'soil': return soilBlock(f);
+                case 'phases': return calendarBlock(f);
+                case 'works': return techCardBlock(f);
+                case 'protection': return sprayingBlock(f);
+                case 'ndvi': return vegBlock(f);
+                case 'rotation': return rotationBlock(f);
+                default: return overviewHtml(f);
+            }
+        }
+
+        function renderFieldMain(f) {
+            const statusName = { 'ok': 'НОРМА', 'warning': 'ВНИМАНИЕ', 'critical': 'КРИТИЧНО' };
+            const tabs = FIELD_TABS.map(([k, l]) => `<button class="ftab ${fieldTab === k ? 'active' : ''}"
+                onclick="setFieldTab('${k}')">${l}</button>`).join('');
+
+            document.getElementById('mainArea').innerHTML = `
+                <div class="field-header">
+                    <div class="field-title">
+                        <h2>${f.name} — ${f.culture}<span class="status-pill ${f.status}">${statusName[f.status]}</span></h2>
+                        <div class="subtitle">${f.region}${f.settlement ? ' · ' + f.settlement : ''} • ${f.area_ha} га •
+                            ${f.variety || ''} • Фаза: ${f.growth_stage}${f.harvest_date ? ' • уборка ' + fmtDate(f.harvest_date) : ''} •
+                            NDVI ${f.ndvi}</div>
+                        <div class="field-stamp">🕒 Данные на <b>${(() => {
+                            if (!f.last_updated) return '—';
+                            const d = new Date(f.last_updated);
+                            return isNaN(d) ? f.last_updated : d.toLocaleString('ru-RU',
+                                {day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'});
+                        })()}</b></div>
+                    </div>
+                    <button class="action-btn" onclick="downloadReport()">📄 Скачать отчёт</button>
+                </div>
+                <div class="ftabs">${tabs}</div>
+                <div class="ftab-body">${fieldTabContent(f)}</div>
+            `;
+
+            if (fieldTab === 'overview') {
+                setTimeout(() => initMap(f), 50);
+                setTimeout(() => initChart(f), 50);
+            }
+        }
+
+        function buildRecommendations(f) {
+            const recs = [];
+            const mMin = f.optimal_moisture[0], mMax = f.optimal_moisture[1];
+            if (f.moisture < mMin) recs.push({ type: 'warn', icon: '💧', text: `<strong>Влажность ниже нормы</strong> на ${(mMin - f.moisture).toFixed(1)}% — рассмотрите полив.` });
+            else if (f.moisture > mMax) recs.push({ type: 'warn', icon: '💧', text: `<strong>Влажность выше нормы</strong> — риск грибковых заболеваний.` });
+            else recs.push({ type: 'ok', icon: '✓', text: `<strong>Влажность в норме</strong> (${f.moisture}%).` });
+
+            const tMin = f.optimal_temp[0], tMax = f.optimal_temp[1];
+            if (f.temperature < tMin) recs.push({ type: 'warn', icon: '🌡', text: `<strong>Температура ниже оптимума</strong> на ${(tMin - f.temperature).toFixed(1)}°C.` });
+            else if (f.temperature > tMax) recs.push({ type: 'warn', icon: '🌡', text: `<strong>Температура выше оптимума</strong> — следите за стрессом.` });
+            else recs.push({ type: 'ok', icon: '✓', text: `<strong>Температура в норме</strong> (${f.temperature}°C).` });
+
+            const maxRisk = Math.max(f.risks.disease, f.risks.drought, f.risks.pests);
+            const maxName = f.risks.disease >= maxRisk ? 'болезней' : f.risks.drought >= maxRisk ? 'засухи' : 'вредителей';
+            if (maxRisk >= 40) recs.push({ type: 'danger', icon: '⚠️', text: `<strong>Риск ${maxName} повышен</strong> (${maxRisk}%) — требуется обработка.` });
+            else recs.push({ type: 'ok', icon: '✓', text: `<strong>Все риски низкие</strong> — максимальный ${maxName} ${maxRisk}%.` });
+
+            if (f.forecast?.days && f.forecast.days.length >= 3) {
+                const rainyDay = f.forecast.days.findIndex((d, i) => i > 0 && d.precipitation > 5);
+                if (rainyDay > 0) recs.push({ type: 'warn', icon: '🌧', text: `<strong>Ожидается дождь</strong> в ${f.forecast.days[rainyDay].weekday} — не планируйте опрыскивание.` });
+                else {
+                    const dryDay = f.forecast.days.findIndex((d, i) => i > 0 && d.precipitation === 0);
+                    if (dryDay > 0) recs.push({ type: 'ok', icon: '☀️', text: `<strong>Сухая погода</strong> в ${f.forecast.days[dryDay].weekday} — хорошее окно для опрыскивания.` });
+                }
+            }
+            return recs.slice(0, 4);
+        }
+
+        function initMap(f) {
+            if (map) { map.remove(); map = null; }
+            map = L.map('map', { zoomControl: true, attributionControl: false }).setView([f.lat, f.lon], 9);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(map);
+            const color = f.status === 'critical' ? '#f44336' : f.status === 'warning' ? '#ff9800' : '#4CAF50';
+            mapMarker = L.circleMarker([f.lat, f.lon], { radius: 10, color, fillColor: color, fillOpacity: 0.6, weight: 2 })
+                .addTo(map).bindPopup(`<b>${f.name}</b><br>${f.culture}`).openPopup();
+        }
+
+        function initChart(f) {
+            const ctx = document.getElementById('riskChart');
+            if (riskChart) riskChart.destroy();
+            riskChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: ['Болезни', 'Засуха', 'Вредители'],
+                    datasets: [{
+                        label: 'Риск, %',
+                        data: [f.risks.disease, f.risks.drought, f.risks.pests],
+                        backgroundColor: [
+                            f.risks.disease >= 70 ? '#f44336' : f.risks.disease >= 40 ? '#ff9800' : '#4CAF50',
+                            f.risks.drought >= 70 ? '#f44336' : f.risks.drought >= 40 ? '#ff9800' : '#4CAF50',
+                            f.risks.pests   >= 70 ? '#f44336' : f.risks.pests   >= 40 ? '#ff9800' : '#4CAF50',
+                        ],
+                        borderRadius: 6, barThickness: 55,
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        title: { display: true, text: 'Прогноз рисков (ML-модель)', color: '#aaa', font: { size: 13, weight: 'normal' } }
+                    },
+                    scales: {
+                        y: { beginAtZero: true, max: 100, ticks: { color: '#888' }, grid: { color: '#2a3138' } },
+                        x: { ticks: { color: '#ccc', font: { size: 12 } }, grid: { display: false } }
+                    }
+                }
+            });
+        }
+
+        function escapeHtml(s) {
+            return String(s).replace(/[&<>"']/g, c => (
+                {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]
+            ));
+        }
+
+        function renderMarkdown(text) {
+            let html = escapeHtml(text);
+            const lines = html.split('\n');
+            const result = [];
+            let tableRows = [];
+
+            function flushTable() {
+                if (tableRows.length === 0) return;
+                const headerLine = tableRows[0];
+                const headers = headerLine.split('|').map(c => c.trim()).filter(c => c !== '');
+                const bodyRows = tableRows.slice(1).filter(row => {
+                    const cells = row.split('|').map(c => c.trim()).filter(c => c !== '');
+                    return !cells.every(c => /^[-:\s]+$/.test(c));
+                });
+
+                // Простая таблица — рендерим как список пунктов
+                if (headers.length <= 1) {
+                    bodyRows.forEach(row => {
+                        const cells = row.split('|').map(c => c.trim()).filter(c => c !== '');
+                        cells.forEach(c => result.push(`<p>• ${c}</p>`));
+                    });
+                    tableRows = [];
+                    return;
+                }
+
+                // Многоколоночная — рендерим как ВЕРТИКАЛЬНЫЕ карточки
+                let htmlCards = '<div class="md-card">';
+                bodyRows.forEach(row => {
+                    const cells = row.split('|').map(c => c.trim()).filter(c => c !== '');
+                    if (cells.length === 0) return;
+
+                    // Первая ячейка — ключ, остальные — значения
+                    const key = cells[0];
+                    const vals = cells.slice(1);
+
+                    // Один столбец данных — простая строка
+                    if (vals.length === 1) {
+                        htmlCards += `<div class="md-card-item"><span class="md-card-key">${key}</span>` +
+                            `<div class="md-card-val">${vals[0]}</div></div>`;
+                    } else {
+                        // Несколько столбцов — ключ + подпись каждого столбца
+                        let valHtml = '';
+                        vals.forEach((v, i) => {
+                            const colHeader = headers[i + 1] || '';
+                            if (colHeader) {
+                                valHtml += `<div><b>${colHeader}:</b> ${v}</div>`;
+                            } else {
+                                valHtml += `<div>${v}</div>`;
+                            }
+                        });
+                        htmlCards += `<div class="md-card-item"><span class="md-card-key">${key}</span>` +
+                            `<div class="md-card-val">${valHtml}</div></div>`;
+                    }
+                });
+                htmlCards += '</div>';
+                result.push(htmlCards);
+                tableRows = [];
+            }
+
+            lines.forEach(line => {
+                const trimmed = line.trim();
+                if (trimmed.startsWith('|') && trimmed.endsWith('|') && trimmed.length > 1) {
+                    tableRows.push(trimmed);
+                } else {
+                    if (tableRows.length > 0) flushTable();
+                    result.push(line);
+                }
+            });
+            if (tableRows.length > 0) flushTable();
+            html = result.join('\n');
+
+            html = html.replace(/^#### (.+)$/gm, '<h5>$1</h5>');
+            html = html.replace(/^### (.+)$/gm, '<h4>$1</h4>');
+            html = html.replace(/^## (.+)$/gm, '<h3>$1</h3>');
+            html = html.replace(/^# (.+)$/gm, '<h3>$1</h3>');
+            html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+            html = html.replace(/(?<!\*)\*([^*\n]+?)\*(?!\*)/g, '<em>$1</em>');
+            html = html.replace(/^---+$/gm, '<hr>');
+            html = html.replace(/^\s*[\-\*•]\s+(.+)$/gm, '<li>$1</li>');
+            html = html.replace(/^\s*\d+[.)]\s+(.+)$/gm, '<li>$1</li>');
+            // каждый непрерывный список оборачиваем один раз (иначе ломался <ul>)
+            html = html.replace(/(?:^|\n)((?:<li>.*<\/li>\n?)+)/g, (m, items) =>
+                '\n<ul>' + items.replace(/\n/g, '') + '</ul>\n');
+            html = html.replace(/<\/ul>\s*<ul>/g, '');
+            html = html.replace(/<ul>([\s\S]*?)<\/ul>/g,
+                (m, inner) => '<ul>' + inner.replace(/\n/g, '') + '</ul>');
+            html = html.replace(/\n/g, '<br>');
+            html = html.replace(/<br>\s*(<div class="md-card"|<ul|<h[3-5]|<hr>)/g, '$1');
+            html = html.replace(/(<\/div>|<\/ul>|<\/h[3-5]>|<hr>)\s*<br>/g, '$1');
+            return html;
+        }
+
+        function quickAsk(text) {
+            document.getElementById('question').value = text;
+            askAI();
+        }
+
+        async function askAI() {
+            const input = document.getElementById('question');
+            const btn = document.getElementById('askBtn');
+            if (btn.disabled) return;                       // запрос уже идёт
+            const question = input.value.trim();
+            if (!question || !selectedFieldId) return;
+
+            const messages = document.getElementById('chatMessages');
+
+            messages.innerHTML += `<div class="msg user">${escapeHtml(question)}</div>`;
+            chatHistory.push({ role: 'user', text: escapeHtml(question) });
+            saveChatForField(selectedFieldId, chatHistory);
+            updateSaveBadge();
+
+            input.value = '';
+            btn.disabled = true;
+            btn.textContent = '...';
+
+            const thinkingId = 'thinking-' + Date.now();
+            messages.innerHTML += `<div class="msg ai thinking" id="${thinkingId}">⏳ ИИ-агроном анализирует поле… (до 30 секунд)</div>`;
+            messages.scrollTop = messages.scrollHeight;
+
+            let streamed = false;
+            let full = '';
+            try {
+                const res = await fetch('/api/chat/stream', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ field_id: selectedFieldId, question })
+                });
+                if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
+
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    full += decoder.decode(value, { stream: true });
+                    const el = document.getElementById(thinkingId);
+                    if (el && full.trim()) {
+                        streamed = true;
+                        el.classList.remove('thinking');
+                        el.innerHTML = renderMarkdown(full) + '<span class="stream-cursor">▍</span>';
+                        messages.scrollTop = messages.scrollHeight;
+                    }
+                }
+                if (!streamed) throw new Error('пустой ответ');
+
+                const el = document.getElementById(thinkingId);
+                if (el) el.innerHTML = renderMarkdown(full);
+                chatHistory.push({ role: 'ai', text: renderMarkdown(full) });
+                saveChatForField(selectedFieldId, chatHistory);
+                updateSaveBadge();
+            } catch (err) {
+                if (streamed) {
+                    const el = document.getElementById(thinkingId);
+                    if (el) el.innerHTML = renderMarkdown(full) +
+                        `<div class="src">Обрыв связи: ${escapeHtml(err.message)}</div>`;
+                } else {
+                    // поток не пошёл — обычный ответ одним куском
+                    try {
+                        const res2 = await fetch('/api/chat', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ field_id: selectedFieldId, question })
+                        });
+                        if (!res2.ok) throw new Error('HTTP ' + res2.status);
+                        const data = await res2.json();
+                        const el = document.getElementById(thinkingId);
+                        el.innerHTML = renderMarkdown(data.answer);
+                        el.classList.remove('thinking');
+                        chatHistory.push({ role: 'ai', text: renderMarkdown(data.answer) });
+                        saveChatForField(selectedFieldId, chatHistory);
+                        updateSaveBadge();
+                    } catch (err2) {
+                        const el = document.getElementById(thinkingId);
+                        if (el) el.textContent = '❌ Ошибка: ' + err2.message;
+                    }
+                }
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Спросить';
+                messages.scrollTop = messages.scrollHeight;
+            }
+        }
+
+        document.getElementById('question').addEventListener('keypress', e => {
+            if (e.key === 'Enter') askAI();
+        });
+
+        function initAllFieldsMap() {
+            if (allFieldsMap) { allFieldsMap.remove(); allFieldsMap = null; }
+            allFieldsMap = L.map('allFieldsMap', { attributionControl: false }).setView([45.5, 40.0], 7);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(allFieldsMap);
+            const bounds = [];
+            fields.forEach(f => {
+                const color = f.status === 'critical' ? '#f44336' : f.status === 'warning' ? '#ff9800' : '#4CAF50';
+                const marker = L.circleMarker([f.lat, f.lon], { radius: 12, color, fillColor: color, fillOpacity: 0.7, weight: 2 }).addTo(allFieldsMap);
+                marker.bindPopup(`<b>${f.name}</b><br>${f.culture}<br><small>${f.region} • ${f.area_ha} га</small>`);
+                marker.on('click', () => { switchView('dashboard'); selectField(f.id); });
+                bounds.push([f.lat, f.lon]);
+            });
+            if (bounds.length > 0) allFieldsMap.fitBounds(bounds, { padding: [40, 40] });
+        }
+
+        function sortCompare(key) {
+            if (compareSort.key === key) compareSort.dir = compareSort.dir === 'asc' ? 'desc' : 'asc';
+            else { compareSort.key = key; compareSort.dir = 'desc'; }
+            renderCompare();
+        }
+
+        function renderCompare() {
+            const total = fields.length;
+            const critical = fields.filter(f => f.status === 'critical').length;
+            const warning = fields.filter(f => f.status === 'warning').length;
+            const totalArea = fields.reduce((s, f) => s + f.area_ha, 0);
+            document.getElementById('summaryCards').innerHTML = `
+                <div class="summary-card"><div class="label">Всего полей</div><div class="num">${total}</div></div>
+                <div class="summary-card ${critical > 0 ? 'danger' : ''}"><div class="label">Критичных</div><div class="num" style="color:${critical > 0 ? '#f44336' : '#fff'}">${critical}</div></div>
+                <div class="summary-card ${warning > 0 ? 'warn' : ''}"><div class="label">Требуют внимания</div><div class="num" style="color:${warning > 0 ? '#ff9800' : '#fff'}">${warning}</div></div>
+                <div class="summary-card"><div class="label">Общая площадь</div><div class="num">${totalArea.toFixed(0)} га</div></div>
+            `;
+            const statusOrder = { 'critical': 3, 'warning': 2, 'ok': 1 };
+            const sorted = [...fields].sort((a, b) => {
+                let va, vb;
+                const k = compareSort.key;
+                if (k === 'disease') { va = a.risks.disease; vb = b.risks.disease; }
+                else if (k === 'drought') { va = a.risks.drought; vb = b.risks.drought; }
+                else if (k === 'pests') { va = a.risks.pests; vb = b.risks.pests; }
+                else if (k === 'status') { va = statusOrder[a.status] || 0; vb = statusOrder[b.status] || 0; }
+                else { va = a[k]; vb = b[k]; }
+                if (typeof va === 'string') return compareSort.dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+                return compareSort.dir === 'asc' ? va - vb : vb - va;
+            });
+            const cell = (v) => {
+                const cls = v >= 70 ? 'high' : (v >= 40 ? 'mid' : 'low');
+                return `<span class="risk-cell ${cls}">${v}%</span>`;
+            };
+            const statusName = { 'ok': 'НОРМА', 'warning': 'ВНИМАНИЕ', 'critical': 'КРИТИЧНО' };
+            document.getElementById('compareBody').innerHTML = sorted.map(f => `
+                <tr style="cursor:pointer" onclick="switchView('dashboard');selectField('${f.id}')">
+                    <td><b>${f.name}</b></td>
+                    <td>${f.culture}</td>
+                    <td>${f.area_ha} га</td>
+                    <td><span class="status-badge ${f.status}">${statusName[f.status]}</span></td>
+                    <td>${cell(f.risks.disease)}</td>
+                    <td>${cell(f.risks.drought)}</td>
+                    <td>${cell(f.risks.pests)}</td>
+                    <td>${f.moisture}%</td>
+                    <td>${f.temperature}°C</td>
+                </tr>
+            `).join('');
+        }
+
+        // ================= СОСТОЯНИЕ ПОЛЕЙ =================
+        let stateRows = null, stateMeta = null, stateFilter = 'all', rotYear = null;
+
+        const fmtDate = (iso) => {
+            if (!iso) return '—';
+            const d = new Date(iso + 'T12:00:00');
+            return d.toLocaleDateString('ru-RU', {day: '2-digit', month: '2-digit', year: 'numeric'});
+        };
+        const shortDate = (iso) => {
+            if (!iso) return '—';
+            const d = new Date(iso + 'T12:00:00');
+            return String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0');
+        };
+        const supplyColor = (p) => p < 70 ? '#f44336' : p < 90 ? '#ff9800' : '#4CAF50';
+        const supplyClass = (p) => p < 70 ? 'bad' : p < 90 ? 'mid' : 'good';
+        const statusRu = (s) => ({critical: 'КРИТИЧНО', warning: 'ВНИМАНИЕ', ok: 'НОРМА'}[s] || s);
+
+        function setStateFilter(k) { stateFilter = k; renderState(false); }
+
+        function setRotYear(y) {
+            rotYear = y;
+            if (currentField) renderFieldMain(currentField);
+        }
+
+        async function renderState(force) {
+            const box = document.getElementById('stateView');
+            if (!box) return;
+            if (force || !stateRows) {
+                box.innerHTML = `<div class="loading-field"><div class="spinner"></div>
+                    <div style="color:#888;font-size:13px">Загружаю состояние посевов…</div></div>`;
+                try {
+                    const res = await fetch('/api/fields/state');
+                    const data = await res.json();
+                    stateRows = data.rows;
+                    stateMeta = data.meta;
+                } catch (e) {
+                    box.innerHTML = '<div class="placeholder">Не удалось загрузить состояние полей</div>';
+                    return;
+                }
+            }
+            const rows = stateRows.filter(r => stateFilter === 'all' || r.status === stateFilter);
+            const crit = stateRows.filter(r => r.status === 'critical').length;
+            const warn = stateRows.filter(r => r.status === 'warning').length;
+            const ha = stateRows.reduce((s, r) => s + r.area_ha, 0);
+            box.innerHTML = `
+                <div class="state-head">
+                    <div>
+                        <div class="state-title">🌾 Состояние полей — текущие посевы</div>
+                        <div class="state-sub">Демо-дата ${fmtDate(stateMeta.demo_date)} • ${stateRows.length} полей •
+                            ${Math.round(ha)} га</div>
+                    </div>
+                    <div class="state-sub">Сформировано ${new Date(stateMeta.generated_at).toLocaleString('ru-RU')}</div>
+                </div>
+                <div class="state-kpis">
+                    <div class="state-kpi"><div class="n">${stateRows.length}</div><div class="l">посевов</div></div>
+                    <div class="state-kpi crit"><div class="n">${crit}</div><div class="l">критичных</div></div>
+                    <div class="state-kpi warn"><div class="n">${warn}</div><div class="l">требуют внимания</div></div>
+                    <div class="state-kpi"><div class="n">${Math.round(ha)}</div><div class="l">га под наблюдением</div></div>
+                </div>
+                <div class="tabs" style="margin-bottom:14px">
+                    ${[['all', 'Все'], ['critical', '🔴 Критичные'], ['warning', '🟠 Внимание'], ['ok', '🟢 Норма']]
+                        .map(([k, l]) => `<button class="tab ${stateFilter === k ? 'active' : ''}"
+                            style="font-size:12px" onclick="setStateFilter('${k}')">${l}</button>`).join('')}
+                </div>
+                <div class="state-grid">${rows.map(stateCard).join('')}</div>
+            `;
+        }
+
+        function stateCard(r) {
+            const st = r.stage || {};
+            const nxt = (r.spraying && r.spraying.next) || null;
+            const npk = r.npk || {};
+            const b = r.npk_bottleneck;
+            const npkPills = ['n', 'p', 'k'].map(k =>
+                `<span class="pill ${supplyClass(npk[k] || 0)}">${k.toUpperCase()} ${npk[k]}%</span>`).join('');
+            return `<div class="sow-card status-${r.status}" onclick="switchView('dashboard');selectField('${r.field_id}')">
+                <div class="sow-top">
+                    <div>
+                        <div class="sow-name">${r.name}</div>
+                        <div class="sow-meta">${r.culture} • ${r.area_ha} га • ${r.region}${r.settlement ? ' · ' + r.settlement : ''}</div>
+                    </div>
+                    <div class="sow-risk"><div class="n ${r.status}">${r.max_risk}</div><div class="l">риск</div></div>
+                </div>
+                <div class="sow-rows">
+                    <div class="sow-row"><span class="lab">Фаза</span><span>${st.title || '—'}</span>
+                        ${r.days_to_harvest != null ? `<span style="margin-left:auto;color:#7f8b96;font-size:11px">
+                        до уборки ${r.days_to_harvest} дн · ${shortDate(r.harvest_date)}</span>` : ''}</div>
+                    <div class="sow-row"><span class="lab">NDVI</span><span>${r.ndvi}</span>
+                        <span style="font-size:11px;color:${r.ndvi_trend > 0.02 ? '#8bd694' : r.ndvi_trend < -0.02 ? '#ef9a9a' : '#8a949e'}">
+                        ${r.ndvi_trend > 0 ? '▲' : r.ndvi_trend < 0 ? '▼' : '→'} ${r.ndvi_verdict}</span></div>
+                    <div class="sow-row"><span class="lab">NPK</span>${npkPills}
+                        ${b ? `<span style="font-size:10.5px;color:${supplyColor(b.supply_pct)}">узкое место — ${b.title}</span>`
+                             : '<span style="font-size:10.5px;color:#8bd694">питание в норме</span>'}</div>
+                    <div class="sow-row"><span class="lab">Обработки</span>
+                        <span>${r.spraying.done} проведено · ${r.spraying.planned} в плане</span></div>
+                    ${nxt ? `<div class="sow-row"><span class="lab">Дальше</span>
+                        <span>${shortDate(nxt.date)} — ${nxt.kind} «${nxt.product}», ${nxt.dose}</span></div>` : ''}
+                    ${r.rotation_next ? `<div class="sow-row"><span class="lab">Севооборот</span>
+                        <span>${r.rotation_next.year} — ${r.rotation_next.crop}</span></div>` : ''}
+                </div>
+            </div>`;
+        }
+
+        // ================= СЕВООБОРОТ =================
+        const CROP_COLORS = {
+            wheat_winter: '#c9a227', barley_spring: '#b8860b', corn_grain: '#e0a800',
+            sunflower: '#f2a63b', soybean: '#6aa9d8', beet_sugar: '#c2556b', fallow: '#6b7280',
+        };
+        const CROP_SHORT = {
+            wheat_winter: 'Пшеница', barley_spring: 'Ячмень', corn_grain: 'Кукуруза',
+            sunflower: 'Подсолн.', soybean: 'Соя', beet_sugar: 'Свёкла', fallow: 'Пар',
+        };
+
+        let rotationData = null;
+
+        async function renderRotation(force) {
+            const box = document.getElementById('rotationView');
+            if (!box) return;
+            if (force || !rotationData) {
+                box.innerHTML = `<div class="loading-field"><div class="spinner"></div>
+                    <div style="color:#888;font-size:13px">Загружаю севооборот…</div></div>`;
+                try {
+                    rotationData = await (await fetch('/api/rotation')).json();
+                } catch (e) {
+                    box.innerHTML = '<div class="placeholder">Не удалось загрузить севооборот</div>';
+                    return;
+                }
+            }
+            const { years, rows } = rotationData;
+            const head = years.map(y => `<th>${y}</th>`).join('');
+            const body = rows.map(r => {
+                const cells = years.map(y => {
+                    const item = (r.years || []).find(x => x.year === y);
+                    if (!item) return '<td>—</td>';
+                    const color = CROP_COLORS[item.crop_key] || '#777';
+                    return `<td><button class="rot-cell-btn ${item.status === 'текущая' ? 'current' : ''}"
+                        onclick="openFieldAt('${r.field_id}', 'rotation')">
+                        <span class="rot-dot" style="background:${color}"></span>${CROP_SHORT[item.crop_key] || item.crop}</button></td>`;
+                }).join('');
+                return `<tr><td><button class="rot-field-btn" onclick="openFieldAt('${r.field_id}', 'rotation')">
+                    <b>${r.name}</b><span>${r.culture} · ${r.area_ha} га</span></button></td>${cells}</tr>`;
+            }).join('');
+
+            box.innerHTML = `
+                <div class="state-head">
+                    <div>
+                        <div class="state-title">🔁 Севооборот на 7 лет</div>
+                        <div class="state-sub">Размещение культур по полям · ${rows.length} полей ·
+                            демо-дата ${fmtDate(rotationData.meta.demo_date)}</div>
+                    </div>
+                    <div class="state-sub">Нажмите на поле или год — откроется обоснование</div>
+                </div>
+                <div class="agro-card rot-grid">
+                    <table><thead><tr><th>Поле</th>${head}</tr></thead><tbody>${body}</tbody></table>
+                </div>`;
+        }
+
+        function openFieldAt(id, tab) {
+            fieldTab = tab || 'overview';
+            switchView('dashboard');
+            if (fields.find(x => x.id === id)) selectField(id);
+        }
+
+        // ================= АГРОНОМИЯ В КАРТОЧКЕ =================
+        function agroBlock(title, inner) {
+            return `<div class="agro-block"><div class="agro-title">${title}</div>
+                <div class="agro-card">${inner}</div></div>`;
+        }
+
+        function soilBlock(f) {
+            const s = f.soil_report;
+            if (!s) return '';
+            const items = s.nutrients.map(n => `<div class="npk-item">
+                <div class="npk-pct" style="color:${supplyColor(n.supply_pct)}">${n.supply_pct}%</div>
+                <div class="npk-name">${n.title}</div>
+                <div class="npk-fact">${n.value} из ${n.target} мг/кг<br>${n.verdict}${n.dose ? '<br><b>' + n.dose + '</b>' : ''}</div>
+            </div>`).join('');
+            return agroBlock(`🧪 Почва и питание · обследование ${fmtDate(s.sampled)}`,
+                `<div class="npk-grid">${items}</div>
+                 <div class="agro-meta">
+                    <span>pH ${s.ph} — ${s.ph_verdict}</span>
+                    <span>гумус ${s.humus_pct}% — ${s.humus_verdict}</span>
+                    <span>слой 0–${s.layer_cm} см</span>
+                 </div>
+                 <div class="agro-note">${s.recommendation}</div>`);
+        }
+
+        function vegChart(veg) {
+            const pts = (veg && veg.points) || [];
+            if (pts.length < 2) return '';
+            const W = 640, H = 190, L = 34, R = 12, T = 12, B = 26;
+            const yOf = (v) => T + (1 - Math.max(0, Math.min(1, v))) * (H - T - B);
+            const xOf = (i) => L + i * (W - L - R) / (pts.length - 1);
+            let grid = '';
+            [0, 0.2, 0.4, 0.6, 0.8, 1].forEach(v => {
+                grid += `<line x1="${L}" y1="${yOf(v)}" x2="${W - R}" y2="${yOf(v)}" stroke="#242b33"/>` +
+                        `<text x="6" y="${yOf(v) + 3}" fill="#5f6879" font-size="9">${v.toFixed(1)}</text>`;
+            });
+            const series = [['ndvi', '#4CAF50'], ['evi', '#42a5f5'], ['savi', '#ffb74d'], ['gndvi', '#ab47bc']];
+            const lines = series.map(([k, c]) => {
+                const d = pts.map((p, i) => (i ? 'L' : 'M') + xOf(i).toFixed(1) + ' ' + yOf(p[k]).toFixed(1)).join(' ');
+                return `<path d="${d}" fill="none" stroke="${c}" stroke-width="2"/>`;
+            }).join('');
+            const idx = pts.findIndex(p => p.date === veg.today);
+            const marker = idx >= 0 ? `<line x1="${xOf(idx)}" y1="${T}" x2="${xOf(idx)}" y2="${H - B}"
+                stroke="#e91e63" stroke-dasharray="3 3" opacity=".7"/>` : '';
+            return `<svg class="veg-chart" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+                ${grid}${lines}${marker}
+                <text x="${L}" y="${H - 8}" fill="#5f6879" font-size="9">${shortDate(pts[0].date)}</text>
+                <text x="${W - R}" y="${H - 8}" fill="#5f6879" font-size="9" text-anchor="end">${shortDate(pts[pts.length - 1].date)}</text>
+            </svg>`;
+        }
+
+        function vegBlock(f) {
+            const v = f.vegetation;
+            if (!v || !v.points || v.points.length < 2) return '';
+            const cur = v.current;
+            const now = [['NDVI', cur.ndvi], ['EVI', cur.evi], ['SAVI', cur.savi], ['GNDVI', cur.gndvi]]
+                .map(([k, val]) => `<div><div class="v">${Number(val).toFixed(2)}</div><div class="k">${k}</div></div>`).join('');
+            return agroBlock(`🛰 Индексы вегетации · ${v.trend}`,
+                `${vegChart(v)}
+                 <div class="veg-legend">
+                    <span><i style="background:#4CAF50"></i>NDVI</span>
+                    <span><i style="background:#42a5f5"></i>EVI</span>
+                    <span><i style="background:#ffb74d"></i>SAVI</span>
+                    <span><i style="background:#ab47bc"></i>GNDVI</span>
+                    <span style="margin-left:auto">пунктир — демо-дата, тренд ${v.trend_ndvi > 0 ? '+' : ''}${v.trend_ndvi}</span>
+                 </div>
+                 <div class="veg-now">${now}</div>
+                 <div class="agro-meta"><span>${v.source}</span></div>`);
+        }
+
+        function calendarBlock(f) {
+            const cal = f.calendar;
+            if (!cal) return '';
+            if (!cal.phases.length) {
+                return agroBlock('📅 Календарь фаз',
+                    `<div class="agro-note">Чистый пар: посев в этом сезоне не выполняется,
+                     поле накапливает влагу и готовится под следующий сезон.</div>`);
+            }
+            const rows = cal.phases.map(p => `<div class="tl-row ${p.status === 'пройдена' ? 'done' : p.status === 'текущая' ? 'now' : ''}">
+                <span class="tl-dot"></span><span class="tl-name">${p.title}</span>
+                <span class="tl-dates">${shortDate(p.start)} — ${shortDate(p.end)}</span>
+                <span class="tl-status">${p.status === 'текущая' ? 'сейчас' : p.status === 'пройдена' ? '✓' : 'предстоит'}</span>
+            </div>`).join('');
+            return agroBlock('📅 Календарь фаз развития',
+                `<div class="timeline">${rows}</div>
+                 <div class="agro-meta">
+                    <span>Посев: ${fmtDate(cal.sowing_date)}</span>
+                    <span>Уборка: ${fmtDate(cal.harvest_date)}${cal.days_to_harvest != null ? ' · через ' + cal.days_to_harvest + ' дн' : ''}</span>
+                 </div>`);
+        }
+
+        function sprayingBlock(f) {
+            const sp = f.spraying_plan;
+            if (!sp || !sp.events.length) return '';
+            const rows = sp.events.map(e => `<div class="spray-row ${e.status === 'проведено' ? 'done' : ''}">
+                <div class="spray-date">${shortDate(e.date)}</div>
+                <div class="spray-body">
+                    <div class="spray-prod"><span class="kind">${e.kind}</span> ${e.product} · ${e.dose}</div>
+                    <div class="spray-meta">${e.target} · ${e.cost_rub_ha} ₽/га · ${e.status}${e.status === 'план' ? ' через ' + e.days_left + ' дн' : ''}</div>
+                </div>
+            </div>`).join('');
+            return agroBlock('🧴 Обработки: что, когда, чем',
+                `${rows}
+                 <div class="agro-meta">
+                    <span>Проведено ${sp.done} · в плане ${sp.planned}</span>
+                    <span>${sp.cost_done_rub_ha} ₽/га факт · ${sp.cost_planned_rub_ha} ₽/га план</span>
+                 </div>`);
+        }
+
+        function rotationBlock(f) {
+            const rot = f.rotation || [];
+            if (!rot.length) return '';
+            const fallback = (rot.find(r => r.status === 'план') || rot[0]).year;
+            const sel = rotYear || fallback;
+            const cur = rot.find(r => r.year === sel) || rot[0];
+            const cells = rot.map(r => `<button class="rot-cell ${r.year === sel ? 'active' : ''}"
+                onclick="setRotYear(${r.year})">
+                <div class="rot-year">${r.year}${r.status === 'текущая' ? ' · сейчас' : ''}</div>
+                <div class="rot-crop">${r.crop}</div></button>`).join('');
+            return agroBlock('🔁 Севооборот на 7 лет',
+                `<div class="rot-scroll">${cells}</div>
+                 <div class="rot-why"><b>${cur.year} — ${cur.crop}:</b> ${cur.why}</div>`);
+        }
+
+        function agroBlocks(f) {
+            return soilBlock(f) + vegBlock(f) + calendarBlock(f) + sprayingBlock(f) + rotationBlock(f);
+        }
+
+        async function downloadReport() {
+            if (!selectedFieldId) return;
+            try {
+                const res = await fetch('/api/report', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ field_id: selectedFieldId, chat_history: chatHistory })
+                });
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const data = await res.json();
+                const blob = new Blob([data.html], { type: 'text/html;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                const fname = `report_${currentField.name.replace(/\s+/g, '_')}_${new Date().toISOString().slice(0,10)}.html`;
+                a.href = url; a.download = fname;
+                document.body.appendChild(a); a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            } catch (err) {
+                alert('Ошибка генерации отчёта: ' + err.message);
+            }
+        }
+
+        loadFields().then(() => {
+            const m = location.hash.match(/^#field\/(.+)$/);
+            if (m) selectField(m[1]);
+            else if (['#state', '#map', '#rotation'].includes(location.hash)) {
+                switchView(location.hash.slice(1));
+            } else if (!selectedFieldId && fields.length && window.innerWidth <= 640) {
+                // на телефоне сразу показываем худшее поле, а не пустую заглушку
+                selectField(fields[0].id);
+            }
+        });
+        setInterval(loadAlerts, 30000);
+
+        // PWA: офлайн-оболочка (localhost или HTTPS)
+        if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })
+                    .catch((err) => console.warn('service worker не зарегистрирован:', err));
+            });
+            // новая версия оболочки — один раз перезагружаем страницу
+            let swRefreshed = false;
+            navigator.serviceWorker.addEventListener('controllerchange', () => {
+                if (!swRefreshed) { swRefreshed = true; location.reload(); }
+            });
+        }
+    </script>
+</body>
+</html>

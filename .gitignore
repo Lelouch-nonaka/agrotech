@@ -1,0 +1,36 @@
+# Секреты — никогда не коммитим
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets.json
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Сборка и дистрибутивы (в ZIP для куратора лежит .env!)
+installer/dist/
+*.log
+server.log
+
+# ОС и IDE
+Thumbs.db
+.DS_Store
+.idea/
+.vs/
+.vscode/
+
+# Мобильная сборка
+mobile/node_modules/
+mobile/dist/
+mobile/build/
+
+# Временные файлы
+*.tmp
+.tmp/

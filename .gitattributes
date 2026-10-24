@@ -1,0 +1,16 @@
+# Нормализация переводов строк
+* text=auto
+
+# Windows-скрипты должны быть с CRLF
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Бинарные файлы
+*.png binary
+*.jpg binary
+*.ico binary
+*.pkl binary
+*.zip binary
+*.pdf binary
+*.pptx binary
